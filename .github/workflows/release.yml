@@ -81,6 +81,9 @@ jobs:
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -eu
+          # checkout 浅检出会把标签降级为轻量标签（%(contents) 将变成 commit 提交信息）；
+          # 显式重取标签引用，带回注解对象（发布说明正文）。
+          git fetch --no-tags --force origin "refs/tags/$TAG:refs/tags/$TAG"
           NOTES="$(git tag -l --format='%(contents)' "$TAG")"
           mkdir -p .release
           if [ -n "$NOTES" ]; then
