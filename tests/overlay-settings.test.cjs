@@ -406,7 +406,7 @@ test('panel retains all controls, scroll position and settings-only styling', ()
   assert.match(source, /positionSettingsPanel\(\);\s*positionSubPop\(\);\s*everMounted = true/);
 });
 
-const ISSUES_URL = 'https://github.com/ByteRax/zcode-token-usage-statusbar/issues';
+const ISSUES_URL = 'https://github.com/neoblackxt/zcode-token-usage-statusbar/issues';
 test('feedback button sits in the footer with localized copy', () => {
   const buildSource = extract('    function settingRow(', '    function syncSettingsScroll() {');
   const body = { scrollTop: 0 };

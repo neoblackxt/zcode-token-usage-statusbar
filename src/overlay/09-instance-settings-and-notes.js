@@ -139,8 +139,9 @@
       if (u && u.restartRequired && relaunchDead) text += "\n" + L("主进程或关闭热更新的文件已更新，需重启 ZCode", "Restart ZCode to load main-process updates or files with hot reload disabled");
       if (relaunchDead) text += "\n" + L("「重启 ZCode」需要新版主进程支持：当前主进程是旧版本，请完全退出 ZCode 后重新打开。", "Restarting ZCode needs a newer main process: the running main process is outdated — quit ZCode completely and reopen it.");
       if (u && u.skipped && u.skipped.length) text += "\n" + L("保留本地热修（未覆盖）：", "Local edits preserved (not overwritten): ") + u.skipped.join(", ");
-      /* v140 API 限流兜底也失败时引导显式切 GitCode 渠道（错误签名在 plugin-updater catalogFallback） */
-      if (u && u.phase === "error" && /渠道清单回退/.test(u.error || "")) text += "\n" + L("GitHub API 不可达且清单回退失败；可改用国内 GitCode 镜像渠道：安装或更新 zcode 插件 https://gitcode.com/tanranran/zcode-token-usage-statusbar.git#plugin-releases-gitcode", "GitHub API is unreachable and the catalog fallback failed; switch to the GitCode mirror: install or update the zcode plugin https://gitcode.com/tanranran/zcode-token-usage-statusbar.git#plugin-releases-gitcode");
+      /* v140 API 限流兜底也失败时引导重试（clean 分叉：上游 GitCode 镜像渠道已移除，
+       * 不引导用户安装官方包——那会重新引入全部入侵行为） */
+      if (u && u.phase === "error" && /渠道清单回退/.test(u.error || "")) text += "\n" + L("GitHub API 不可达且清单回退失败；请稍后重试，或安装/更新 zcode 插件 https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases", "GitHub API is unreachable and the catalog fallback failed; retry later, or install or update the zcode plugin from https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases");
       if (relaunchSent) text += "\n" + L("已发出重启请求：ZCode 正在退出全部窗口并自动重新打开；等待会话与扩展子进程退出通常需要几秒到几十秒，请稍候。", "Restart request sent: ZCode is closing all windows and will reopen automatically; waiting for session and extension child processes to exit can take a few seconds to tens of seconds.");
       panel.querySelector(".zu-update-status").textContent = text;
       syncProgress(active ? u : null);
@@ -1435,7 +1436,7 @@
       if (e.target.closest && e.target.closest(".zu-settings-feedback")) {
         /* 优先走客户端 zcode 桥（IPC → 主进程 shell.openExternal，系统默认浏览器）；
            window.open 会被客户端内置浏览器接管，仅作无桥环境兜底 */
-        var zc = window.zcode, issuesUrl = "https://github.com/ByteRax/zcode-token-usage-statusbar/issues";
+        var zc = window.zcode, issuesUrl = "https://github.com/neoblackxt/zcode-token-usage-statusbar/issues";
         if (zc && typeof zc.openExternal === "function") zc.openExternal(issuesUrl);
         else window.open(issuesUrl, "_blank", "noopener");
         return;
