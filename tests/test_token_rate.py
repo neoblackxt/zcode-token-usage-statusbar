@@ -515,7 +515,7 @@ class TestLatestLine(RateTestBase):
 
 class TestPromptSubmitHook(RateTestBase):
     def run_hook(self, sid=SID):
-        # ZUSAGE_PLUGIN_RUNTIME 指向空 fixture 运行时目录：config 缺失 → 开关缺省=开启（密闭）
+        # ZUSAGE_PLUGIN_RUNTIME 指向空 fixture 运行时目录：config 缺失 → 开关缺省=关闭（clean 分叉密闭）
         env = dict(os.environ, ZCODE_USAGE_DB=self.db, ZCODE_SESSION_ID=sid,
                    ZUSAGE_RATE_STATE_FILE=self.state,
                    ZUSAGE_PLUGIN_RUNTIME=str(self.runtime))
@@ -523,6 +523,7 @@ class TestPromptSubmitHook(RateTestBase):
                               capture_output=True, text=True, env=env, timeout=30)
 
     def test_strict_json_state_written_and_no_model_instruction(self):
+        # clean 分叉缺省：不注入任何背景行，仍严格 JSON；状态文件照写（--current 守卫依据）
         before = int(time.time() * 1000)
         r = self.run_hook()
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -531,13 +532,7 @@ class TestPromptSubmitHook(RateTestBase):
         inner = out["hookSpecificOutput"]
         self.assertEqual(set(inner), {"hookEventName", "additionalContext"})
         self.assertEqual(inner["hookEventName"], "UserPromptSubmit")
-        ctx = inner["additionalContext"]
-        self.assertIn("【内部背景·勿展示】上一条回复:", ctx)
-        self.assertIn("160 token/s(上轮)", ctx)
-        # 统计行已确定性渲染（overlay.js 桥接）：不再向模型下达任何统计指令
-        for banned in ("本轮统计指令", "运行一次:", "Markdown 引用块",
-                       "token_rate.py", "--turn", "--current", "--session"):
-            self.assertNotIn(banned, ctx, banned)
+        self.assertEqual(inner["additionalContext"], "")   # 缺省=关：零注入
         # 状态文件：记录了会话与提问时刻（--current 守卫依据）
         st = json.loads(Path(self.state).read_text())
         self.assertEqual(st["sessionId"], SID)
@@ -552,7 +547,7 @@ class TestPromptSubmitHook(RateTestBase):
         self.assertEqual(r.stdout, "")
 
     def test_hook_without_session_env_still_valid_json(self):
-        env = dict(os.environ, ZCODE_USAGE_DB=self.db, ZUSAGE_RATE_STATE_FILE=self.state,
+        env = dict(os.environ, ZCODE_USAGE_DB=self.db, ZCODE_RATE_STATE_FILE=self.state,
                    ZUSAGE_PLUGIN_RUNTIME=str(self.runtime))
         env.pop("ZCODE_SESSION_ID", None)
         env.pop("CLAUDE_SESSION_ID", None)
@@ -563,8 +558,7 @@ class TestPromptSubmitHook(RateTestBase):
         self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit")
         self.assertFalse(Path(self.state).exists())  # 无会话不写状态
         context = out["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("【内部背景·勿展示】", context)   # 背景行通道保留
-        self.assertNotIn("本轮统计指令", context)       # 统计指令已删除
+        self.assertEqual(context, "")   # clean 分叉缺省关：无背景行、无任何注入
 
     def test_toggle_off_injects_no_instruction(self):
         # ⚙ 面板关闭（config.json answer_rate_line=false）：不下达统计指令、不注入背景行，
@@ -578,27 +572,32 @@ class TestPromptSubmitHook(RateTestBase):
         inner = out["hookSpecificOutput"]
         self.assertEqual(set(inner), {"hookEventName", "additionalContext"})
         self.assertEqual(inner["hookEventName"], "UserPromptSubmit")
-        self.assertEqual(inner["additionalContext"], "")   # fixture 无重启提醒：关闭即空上下文
+        self.assertEqual(inner["additionalContext"], "")   # 关闭即空上下文
         st = json.loads(Path(self.state).read_text())
         self.assertEqual(st["sessionId"], SID)
 
-    def test_toggle_corrupt_config_defaults_on(self):
-        # config 损坏 → 视为开启（开关失效不吞功能）：背景行仍在
+    def test_toggle_corrupt_config_defaults_off(self):
+        # config 损坏 → clean 分叉视为关闭（配置不可读时不注入任何上下文）
         (self.runtime / "config.json").write_text("{broken", encoding="utf-8")
         r = self.run_hook()
         out = json.loads(r.stdout)
         ctx = out["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("【内部背景·勿展示】", ctx)
+        self.assertEqual(ctx, "")
         self.assertNotIn("本轮统计指令", ctx)
 
-    def test_toggle_explicit_true(self):
-        # 显式 true 与缺省同义：开启
+    def test_toggle_explicit_true_still_injects_nothing(self):
+        # clean 分叉：answer_rate_line 只控制前端统计行（纯 UI）；显式 true 也不恢复
+        # hook 的速率背景行注入——hook 无条件零注入
         (self.runtime / "config.json").write_text('{"answer_rate_line": true}', encoding="utf-8")
         r = self.run_hook()
+        self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         ctx = out["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("【内部背景·勿展示】", ctx)
-        self.assertNotIn("本轮统计指令", ctx)
+        self.assertEqual(ctx, "")
+        for banned in ("【内部背景·勿展示】", "本轮统计指令", "Markdown 引用块"):
+            self.assertNotIn(banned, ctx, banned)
+        st = json.loads(Path(self.state).read_text())
+        self.assertEqual(st["sessionId"], SID)   # 提问时刻仍记录（--current 守卫）
 
     def test_concurrent_real_hooks_share_state_lock_and_preserve_all_prompts(self):
         # Parent holds the real OS lock; children execute the real hook and record

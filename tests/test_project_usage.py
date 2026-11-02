@@ -174,25 +174,30 @@ class ProjectUsageAggTests(FixtureBase):
     def test_file_db_ttl_cache(self):
         # v177：缓存挂库文件身份（内存库不缓存）——命中省重扫（大库单项目聚合 ~40ms/次）、
         # TTL 过期重算、不同库文件天然隔离。
+        # 连接必须在 with 内显式关闭：Windows 不许删除被占用的 sqlite 文件，
+        # addCleanup 会在临时目录清理之后才执行，目录就删不掉了。
         with tempfile.TemporaryDirectory() as td:
             dbpath = str(Path(td) / "db.sqlite")
             con = sqlite3.connect(dbpath)
-            self.addCleanup(con.close)
-            con.row_factory = sqlite3.Row
-            con.executescript(SCHEMA)
-            self.sess(con, "m1")
-            self.usage(con, "r1", "m1", total=100)
-            p1 = zusage._project_usage(con, "m1")
-            self.assertEqual(p1["total"], 100)
-            full = (zusage._db_cache_key(con), ("proj_repo", "/repo", False))   # 键含目录（issue #248）
-            self.assertIn(full, zusage._PROJ_CACHE)
-            self.usage(con, "r2", "m1", turn="t2", total=200)
-            self.assertEqual(zusage._project_usage(con, "m1")["total"], 100, "TTL 内命中旧值")
-            ts, val = zusage._PROJ_CACHE[full]
-            zusage._PROJ_CACHE[full] = (ts - zusage._AGG_TTL_MS - 1, val)
-            self.assertEqual(zusage._project_usage(con, "m1")["total"], 300, "TTL 过期重算")
+            try:
+                con.row_factory = sqlite3.Row
+                con.executescript(SCHEMA)
+                self.sess(con, "m1")
+                self.usage(con, "r1", "m1", total=100)
+                p1 = zusage._project_usage(con, "m1")
+                self.assertEqual(p1["total"], 100)
+                full = (zusage._db_cache_key(con), ("proj_repo", "/repo", False))   # 键含目录（issue #248）
+                self.assertIn(full, zusage._PROJ_CACHE)
+                self.usage(con, "r2", "m1", turn="t2", total=200)
+                self.assertEqual(zusage._project_usage(con, "m1")["total"], 100, "TTL 内命中旧值")
+                ts, val = zusage._PROJ_CACHE[full]
+                zusage._PROJ_CACHE[full] = (ts - zusage._AGG_TTL_MS - 1, val)
+                self.assertEqual(zusage._project_usage(con, "m1")["total"], 300, "TTL 过期重算")
+            finally:
+                con.close()
             # 内存库不缓存：同一数据每次就地聚合
             mem = self.fixture()
+            self.addCleanup(mem.close)
             self.sess(mem, "m1")
             self.usage(mem, "r1", "m1", total=42)
             self.assertIsNone(zusage._db_cache_key(mem))
@@ -302,19 +307,22 @@ class ProjectSlugCollisionTests(FixtureBase):
 
     def test_file_db_cache_key_includes_directory(self):
         # 同 project_id 两个碰撞项目先后查询：TTL 内第二查不得命中甲的缓存值（键含目录）
+        # clean 分叉补：连接在 with 内显式关闭（Windows 不许删除被占用的 sqlite 文件，
+        # addCleanup 会在临时目录清理之后才执行——与 test_file_db_ttl_cache 同款修法）。
         with tempfile.TemporaryDirectory() as td:
-            con = sqlite3.connect(str(Path(td) / "db.sqlite"))
-            self.addCleanup(con.close)
-            con.row_factory = sqlite3.Row
-            con.executescript(SCHEMA)
-            self.sess(con, "m1", project=self.COLLID, directory="D:\\Projects\\Shared\\项目甲")
-            self.sess(con, "m2", project=self.COLLID, directory="D:\\Projects\\Shared\\项目乙")
-            self.usage(con, "r1", "m1", total=100)
-            self.usage(con, "r2", "m2", total=500)
-            self.assertEqual(zusage._project_usage(con, "m1")["total"], 100)
-            self.assertEqual(zusage._project_usage(con, "m2")["total"], 500)
-            self.assertEqual(zusage._project_usage(con, "m1")["total"], 100)
-
+            try:
+                con = sqlite3.connect(str(Path(td) / "db.sqlite"))
+                con.row_factory = sqlite3.Row
+                con.executescript(SCHEMA)
+                self.sess(con, "m1", project=self.COLLID, directory="D:\\Projects\\Shared\\项目甲")
+                self.sess(con, "m2", project=self.COLLID, directory="D:\\Projects\\Shared\\项目乙")
+                self.usage(con, "r1", "m1", total=100)
+                self.usage(con, "r2", "m2", total=500)
+                self.assertEqual(zusage._project_usage(con, "m1")["total"], 100)
+                self.assertEqual(zusage._project_usage(con, "m2")["total"], 500)
+                self.assertEqual(zusage._project_usage(con, "m1")["total"], 100)
+            finally:
+                con.close()
 
 class ProjectSnapshotInjectTests(FixtureBase):
     def snapshot_with(self, con, force_sid, routes=None):
