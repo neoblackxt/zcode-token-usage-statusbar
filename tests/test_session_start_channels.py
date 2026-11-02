@@ -102,39 +102,47 @@ class SessionStartChannelTests(unittest.TestCase):
             self.assertGreater(record["time"], 0)
         return output, stderr.getvalue()
 
-    def context(self, output):
-        specific = output.get("hookSpecificOutput")
-        self.assertIsInstance(specific, dict, "SessionStart 提示不能只留在 systemMessage")
-        self.assertEqual(specific["hookEventName"], "SessionStart")
-        self.assertIsInstance(specific["additionalContext"], str)
-        self.assertIn(output["systemMessage"], specific["additionalContext"])
-        self.assertNotIn("additionalContext", output, "避免同一提示通过两个有效通道重复注入")
-        return specific["additionalContext"]
+    def failure_message(self, output):
+        """clean 分叉：故障提示只走 systemMessage（stderr + UI 展示），模型上下文零注入。"""
+        self.assertNotIn("hookSpecificOutput", output, "clean 分叉不得向模型上下文注入文字")
+        self.assertNotIn("additionalContext", output)
+        message = output.get("systemMessage")
+        self.assertIsInstance(message, str, "故障提示必须落在 systemMessage")
+        return message
 
     def test_run_hook_resolution_sync_and_install_errors_reach_context_and_diagnostic(self):
-        for target in ("resolve_paths", "sync_runtime", "_install_overlay"):
+        # clean 分叉反转：resolve/sync 异常 → systemMessage（原 additionalContext 通道移除）；
+        # _install_overlay 根本不被 hook 调用（无安装行为，也就没有安装错误路径）。
+        for target in ("resolve_paths", "sync_runtime"):
             with self.subTest(target=target), mock.patch.object(
                     self.installer, target, side_effect=OSError("fixture denied: " + target)):
                 before = self.asar.read_bytes()
                 output, errors = self.invoke()
-                self.assertIn("自检失败（已忽略）", self.context(output))
-                self.assertIn("fixture denied: " + target, self.context(output))
+                self.assertIn("自检失败（已忽略）", self.failure_message(output))
+                self.assertIn("fixture denied: " + target, self.failure_message(output))
                 self.assertEqual(self.asar.read_bytes(), before)
-                self.assertEqual(errors, "")
+                self.assertIn("fixture denied: " + target, errors)   # stderr 同步诊断
                 self.assertTrue((self.runtime / "plugin-session-start.json").is_file())
+        with mock.patch.object(self.installer, "_install_overlay",
+                               side_effect=AssertionError("hook must not install")):
+            before = self.asar.read_bytes()
+            output, errors = self.invoke()
+        self.assertEqual(output, {"suppressOutput": True})
+        self.assertEqual(self.asar.read_bytes(), before)
+        self.assertTrue((self.runtime / "plugin-session-start.json").is_file())
         self.assertEqual(self.rate.write_session_state.call_count, 3)
 
     def test_entry_catches_unexpected_run_hook_failure_with_context_and_diagnostic(self):
         with mock.patch.object(self.installer, "run_hook", side_effect=RuntimeError("fixture bootstrap failed")):
             output, errors = self.invoke()
-        self.assertIn("fixture bootstrap failed", self.context(output))
-        self.assertEqual(errors, "")
+        self.assertIn("fixture bootstrap failed", self.failure_message(output))
+        self.assertIn("fixture bootstrap failed", errors)
         self.assertTrue((self.runtime / "plugin-session-start.json").is_file())
 
     def test_entry_import_failure_keeps_json_and_context_without_notice_helper(self):
         with mock.patch.dict(sys.modules, {"overlay_install": None, "restart_notice": None}):
             output, errors = self.invoke()
-        self.assertIn("自检失败（已忽略）", self.context(output))
+        self.assertIn("自检失败（已忽略）", self.failure_message(output))
         self.assertIn("会话启动诊断写入失败", errors)
         self.assertFalse((self.runtime / "plugin-session-start.json").exists())
 
@@ -142,90 +150,83 @@ class SessionStartChannelTests(unittest.TestCase):
         self.sync.side_effect = ValueError("fixture corrupt record")
         with mock.patch.object(self.installer, "_atomic_write", side_effect=OSError("fixture diagnostic denied")):
             output, errors = self.invoke()
-        self.assertIn("fixture corrupt record", self.context(output))
+        self.assertIn("fixture corrupt record", self.failure_message(output))
         self.assertIn("会话启动诊断写入失败", errors)
         self.assertIn("fixture diagnostic denied", errors)
         self.assertFalse((self.runtime / "plugin-session-start.json").exists())
 
     def test_uninstalled_attempts_auto_install_and_preserves_config(self):
-        # v172：自动安装不再有开关——未注入时 hook 一律尝试安装，失败走重试提示；
-        # 用户其余配置与旧 nudge 标记不被触碰。
+        # clean 分叉反转：未注入时 hook 不安装也不提示——install 零调用、配置零写入，
+        # 用户其余配置与旧 nudge 标记原样保留；未注入说明只走 stderr 日志行。
         self.config.write_text('{"plugin_auto_update": false, '
                                '"python_path": "custom", "other": 7}', encoding="utf-8")
         legacy = self.runtime / ".plugin-overlay-nudge"
         legacy.write_text("1", encoding="utf-8")
         for _ in range(2):
-            output, _ = self.invoke()
-            self.assertIn("自动安装未完成", self.context(output))
-            self.assertIn("install-overlay", self.context(output))
-        self.assertEqual(self.install.call_count, 2)
+            output, errors = self.invoke()
+            self.assertEqual(output, {"suppressOutput": True})
+            self.assertIn("不自动安装", errors)
+        self.assertEqual(self.install.call_count, 0)
         config = json.loads(self.config.read_text(encoding="utf-8"))
         self.assertIs(config["plugin_auto_update"], False)
         self.assertEqual(config["python_path"], "custom")
         self.assertEqual(config["other"], 7)
-        self.assertEqual(config["asar_path"], str(self.asar))
+        self.assertNotIn("asar_path", config)
         self.assertEqual(legacy.read_text(encoding="utf-8"), "1")
 
     def test_corrupt_config_still_attempts_auto_install(self):
-        # v172：损坏/异常配置不再静默跳过安装尝试（旧行为「损坏→不装」随开关一起移除）；
-        # 损坏配置保持原样不重建，合法配置只合并所需键。
+        # clean 分叉反转：损坏/异常配置不再触发安装尝试（本就没有安装行为）；
+        # 损坏配置保持原样不重建，合法配置原样保留不被合并改写。
         for raw in ("{broken", "null", '{"plugin_auto_install_overlay": "false"}'):
             with self.subTest(raw=raw):
                 self.config.write_text(raw, encoding="utf-8")
                 output, _ = self.invoke()
-                self.assertIn("自动安装未完成", self.context(output))
-                self.install.assert_called()
+                self.assertEqual(output, {"suppressOutput": True})
+                self.install.assert_not_called()
                 if raw in ("{broken", "null"):
                     self.assertEqual(self.config.read_text(encoding="utf-8"), raw)
                 else:
                     self.assertEqual(json.loads(self.config.read_text())["plugin_auto_install_overlay"], "false")
 
     def test_unfinished_auto_install_nudge_restores_monitor_flags_and_redirects_logs(self):
+        # clean 分叉反转：hook 不运行安装器，监控静默标志全程不被设置也不需还原；
+        # 安装器 stdout（人类可读日志）自然无从混入 hook stdout。
         def unfinished(before_publish):
-            self.assertEqual(os.environ["ZUSAGE_NO_MONITOR"], "1")
-            self.assertEqual(os.environ["ZUSAGE_MONITOR_QUIET"], "1")
-            print("fixture install unfinished")
-            return False
+            raise AssertionError("hook must not auto-install in the clean fork")
         self.install.side_effect = unfinished
         with mock.patch.dict(os.environ, {"ZUSAGE_NO_MONITOR": "custom", "ZUSAGE_MONITOR_QUIET": "0"}):
             for _ in range(2):
-                output, errors = self.invoke()
-                self.assertIn("自动安装未完成", self.context(output))
-                self.assertIn("install-overlay", self.context(output))
-                self.assertIn("fixture install unfinished", errors)
+                output, _ = self.invoke()
+                self.assertEqual(output, {"suppressOutput": True})
                 self.assertEqual(os.environ["ZUSAGE_NO_MONITOR"], "custom")
                 self.assertEqual(os.environ["ZUSAGE_MONITOR_QUIET"], "0")
 
     def test_pending_install_failure_nudges_full_quit_instead_of_retry(self):
-        # issue #120：客户端运行中、待收尾包已排定的失败，重试 /install-overlay 无法
-        # 前进（只会再 repack 一次再失败）；提示必须指向「完全退出 ZCode 等自动收尾」，
-        # 并保留卸载豁免出口，不能继续引导无效重试。
+        # clean 分叉反转：issue #120 的「已排定/完全退出」承诺随自动安装一起消失——
+        # hook 不安装、不判定待收尾状态、不给任何重试或退出指引。
         self.install.side_effect = lambda before_publish: False
         with mock.patch.object(self.pi, "pending_tmp", return_value={"operation": "install"}) as pending, \
                 mock.patch.object(self.pi, "client_running", return_value=True):
             output, _ = self.invoke()
-        pending.assert_called_with("install")   # 变异 M15 补强：操作类型必须锁死为 install
-        context = self.context(output)
-        self.assertIn("已排定", context)
-        self.assertIn("完全退出 ZCode", context)
-        self.assertNotIn("install-overlay 重试", context)
-        self.assertIn("uninstall-overlay", context)
+        pending.assert_not_called()   # 不再判定待收尾包
+        self.assertEqual(output, {"suppressOutput": True})
+        self.install.assert_not_called()
 
     def test_pending_without_running_client_keeps_retry_hint(self):
-        # 待收尾包有效但客户端未在跑（如杀软瞬时占用的 POSIX 场景）：重试仍然有意义，
-        # 维持原有提示。
+        # clean 分叉反转：待收尾包 + 客户端未运行同样零动作零提示。
         self.install.side_effect = lambda before_publish: False
         with mock.patch.object(self.pi, "pending_tmp", return_value={"operation": "install"}), \
                 mock.patch.object(self.pi, "client_running", return_value=False):
             output, _ = self.invoke()
-        context = self.context(output)
-        self.assertIn("自动安装未完成", context)
-        self.assertIn("install-overlay", context)
+        self.assertEqual(output, {"suppressOutput": True})
+        self.install.assert_not_called()
 
     def test_install_exception_restores_previously_absent_monitor_flags(self):
+        # clean 分叉反转：安装器异常无从发生（不会被调用）；标志保持进入前缺失状态。
         self.install.side_effect = OSError("fixture install denied")
         output, _ = self.invoke()
-        self.assertIn("fixture install denied", self.context(output))
+        self.assertEqual(output, {"suppressOutput": True})
+        self.install.assert_not_called()
         self.assertNotIn("ZUSAGE_NO_MONITOR", os.environ)
         self.assertNotIn("ZUSAGE_MONITOR_QUIET", os.environ)
 
@@ -243,19 +244,18 @@ class SessionStartChannelTests(unittest.TestCase):
         self.install.assert_not_called()
 
     def test_successful_auto_install_stays_silent(self):
-        # v172：自动安装成功同样不注入文字（红点由 marker → restartRequired 推送驱动）。
+        # clean 分叉反转：不存在"自动安装成功"路径——hook 零安装，asar 保持官方字节，
+        # 未注入说明只走 stderr 日志行，stdout 仍为纯 hook JSON。
         def install(before_publish):
-            import runtime_lock
-            installation = {"asar": str(self.asar), "entryHash": "a" * 64}
-            before_publish(installation)
-            with runtime_lock.publish_install(self.runtime, installation):
-                self.make_asar(injected=True)
-            print("fixture installed")
-            return True
+            raise AssertionError("hook must not auto-install in the clean fork")
         self.install.side_effect = install
+        before = self.asar.read_bytes()
         output, errors = self.invoke()
         self.assertEqual(output, {"suppressOutput": True})
-        self.assertIn("fixture installed", errors)
+        self.install.assert_not_called()
+        self.assertEqual(self.asar.read_bytes(), before)
+        self.assertIn("不自动安装", errors)
+        self.assertIn("install-overlay", errors)
 
     def test_incomplete_restart_record_stays_silent_in_session(self):
         # v172：已注入时记录不可验证也不注入文字；修复文案只由 /install-overlay CLI 反馈。
@@ -277,6 +277,8 @@ class SessionStartChannelTests(unittest.TestCase):
         self.install.assert_not_called()
 
     def test_optout_suppresses_normal_and_failed_selfcheck_without_config_changes(self):
+        # clean 分叉反转：豁免标记不再压制诊断——失败照样 systemMessage + stderr；
+        # 正常路径与失败路径都不写 config（未注入不补 asar_path）、不动豁免标记。
         optout = self.runtime / ".plugin-overlay-optout"
         optout.write_text("1", encoding="utf-8")
         self.notice.record_restart(self.runtime)
@@ -285,25 +287,34 @@ class SessionStartChannelTests(unittest.TestCase):
             with self.subTest(fail=fail):
                 self.sync.side_effect = OSError("fixture opted-out failure") if fail else None
                 output, errors = self.invoke()
-                self.assertEqual(output, {"suppressOutput": True})
-                self.assertEqual("fixture opted-out failure" in errors, fail)
+                if fail:
+                    self.assertIn("fixture opted-out failure", self.failure_message(output))
+                    self.assertIn("fixture opted-out failure", errors)
+                else:
+                    self.assertEqual(output, {"suppressOutput": True})
+                    self.assertIn("不自动安装", errors)
                 self.assertEqual(self.config.read_bytes(), before)
                 self.assertEqual(optout.read_text(encoding="utf-8"), "1")
         self.install.assert_not_called()
 
     def test_optout_suppresses_entry_and_import_failures(self):
+        # clean 分叉反转：optout 不改变入口失败的行为——systemMessage 照发、诊断照写。
         (self.runtime / ".plugin-overlay-optout").write_text("1", encoding="utf-8")
         with mock.patch.object(self.installer, "run_hook", side_effect=RuntimeError("fixture entry denied")):
             output, errors = self.invoke()
-        self.assertEqual(output, {"suppressOutput": True})
+        self.assertIn("fixture entry denied", self.failure_message(output))
         self.assertIn("fixture entry denied", errors)
         self.assertTrue((self.runtime / "plugin-session-start.json").is_file())
+        # import 失败分支写不了诊断文件：先清掉上一分支的记录，避免陈旧内容干扰比对
+        (self.runtime / "plugin-session-start.json").unlink()
         with mock.patch.dict(sys.modules, {"overlay_install": None}):
             output, errors = self.invoke()
-        self.assertEqual(output, {"suppressOutput": True})
+        self.assertIn("自检失败", self.failure_message(output))
         self.assertIn("自检失败", errors)
+        self.assertFalse((self.runtime / "plugin-session-start.json").exists())
 
     def test_unreadable_optout_in_entry_failure_keeps_legal_json(self):
+        # clean 分叉：hook/入口不再读豁免标记——stat 失败与入口失败互不相干，输出仍合法 JSON。
         stat = Path.stat
         def unreadable(path, *args, **kwargs):
             if path.name == ".plugin-overlay-optout":
@@ -312,7 +323,7 @@ class SessionStartChannelTests(unittest.TestCase):
         with mock.patch.object(self.installer, "run_hook", side_effect=RuntimeError("fixture entry denied")), \
                 mock.patch.object(Path, "stat", unreadable):
             output, errors = self.invoke()
-        self.assertEqual(output, {"suppressOutput": True})
+        self.assertIn("fixture entry denied", self.failure_message(output))
         self.assertIn("fixture entry denied", errors)
 
     def test_background_update_failure_is_stderr_only(self):
@@ -337,9 +348,10 @@ class SessionStartChannelTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stderr)
         output = json.loads(process.stdout)
         self.assertEqual(process.stdout, json.dumps(output, ensure_ascii=False) + "\n")
-        self.assertIn("fixture sync rejected", self.context(output))
+        self.assertIn("fixture sync rejected", self.failure_message(output))
         self.assertTrue(output["suppressOutput"])
         self.assertNotIn("decision", output)
+        self.assertNotIn("hookSpecificOutput", output)
         record = json.loads((self.runtime / "plugin-session-start.json").read_text(encoding="utf-8"))
         self.assertEqual(record["result"], output)
         self.assertEqual(record["source"], "startup")

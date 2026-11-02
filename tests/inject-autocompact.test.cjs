@@ -55,6 +55,15 @@ test("autocompact-config dispatches mode/value passthrough", async () => {
   assert.deepEqual(calls.config, [{ mode: "percent", value: 70, requestId: "r3" }]);
 });
 
+test("clean 分叉契约：引擎补丁缺省关，显式 true 才打", () => {
+  // 上游 v188 起缺省开（且头注与代码不一致——注释写默认关、代码 !== false），该默认值
+  // 上游一直零测试覆盖。clean 分叉改缺省关，这里钉死为源码契约，防止合并上游时静默回归。
+  assert.ok(source.includes("isEnabled: () => readCfgCached().auto_compact_patch === true"),
+    "inject-main.cjs 引擎补丁 isEnabled 必须是显式 === true（clean 分叉缺省关）");
+  assert.ok(!source.includes("auto_compact_patch !== false"),
+    "不得回归上游缺省开写法（auto_compact_patch !== false）");
+});
+
 function pushStateSlice() {
   const a = source.indexOf("function pushPluginState(wc, state) {");
   // v206 起 ack 前置到更新器初始化之前：切片止于 ack 注释，避免把 ack 调用圈进沙箱
