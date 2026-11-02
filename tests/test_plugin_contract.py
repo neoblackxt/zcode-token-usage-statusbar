@@ -55,9 +55,10 @@ class PluginContractTests(unittest.TestCase):
                              market["plugins"][0].get("icon"))
             # URL 内容与仓库路径强绑定（docs.md §3 路径冻结规则的可执行形态）：
             # 改仓库名/分支/图标路径任一环都应显式改这里，而不是静默 404。
+            # clean 分叉：图标 CDN 指向分叉仓库 clean 分支（上游 @main 不再使用）。
             icon = market["plugins"][0].get("icon", "")
             self.assertEqual(icon,
-                             "https://cdn.jsdelivr.net/gh/ByteRax/zcode-token-usage-statusbar@main/docs/promo/icon.webp")
+                             "https://cdn.jsdelivr.net/gh/neoblackxt/zcode-token-usage-statusbar@clean/docs/promo/icon.webp")
             self.assertTrue((ROOT / "docs/promo/icon.webp").is_file(), icon)
 
     def test_hook_matcher_and_timeouts_match_host_contract(self):
