@@ -567,7 +567,7 @@ test('mobile relay failure retains the newest broadcast and detached panes relea
   assert.equal(b.get('.zu-mobile-relay').checked, false);
 });
 
-const ISSUES_URL = 'https://github.com/ByteRax/zcode-token-usage-statusbar/issues';
+const ISSUES_URL = 'https://github.com/neoblackxt/zcode-token-usage-statusbar/issues';
 const MOBILE_SCRIPT_URL = 'https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js';
 test('mobile settings owns the localized script entry and relay disclosure stays in about', () => {
   const buildSource = extract('  var ZU_BAR_KEYS =', '  var state = {') + '\n' +
