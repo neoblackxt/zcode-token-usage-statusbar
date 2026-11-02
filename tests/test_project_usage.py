@@ -156,25 +156,30 @@ class ProjectUsageAggTests(FixtureBase):
     def test_file_db_ttl_cache(self):
         # v177：缓存挂库文件身份（内存库不缓存）——命中省重扫（大库单项目聚合 ~40ms/次）、
         # TTL 过期重算、不同库文件天然隔离。
+        # 连接必须在 with 内显式关闭：Windows 不许删除被占用的 sqlite 文件，
+        # addCleanup 会在临时目录清理之后才执行，目录就删不掉了。
         with tempfile.TemporaryDirectory() as td:
             dbpath = str(Path(td) / "db.sqlite")
             con = sqlite3.connect(dbpath)
-            self.addCleanup(con.close)
-            con.row_factory = sqlite3.Row
-            con.executescript(SCHEMA)
-            self.sess(con, "m1")
-            self.usage(con, "r1", "m1", total=100)
-            p1 = zusage._project_usage(con, "m1")
-            self.assertEqual(p1["total"], 100)
-            full = (zusage._db_cache_key(con), ("proj_repo", False))
-            self.assertIn(full, zusage._PROJ_CACHE)
-            self.usage(con, "r2", "m1", turn="t2", total=200)
-            self.assertEqual(zusage._project_usage(con, "m1")["total"], 100, "TTL 内命中旧值")
-            ts, val = zusage._PROJ_CACHE[full]
-            zusage._PROJ_CACHE[full] = (ts - zusage._AGG_TTL_MS - 1, val)
-            self.assertEqual(zusage._project_usage(con, "m1")["total"], 300, "TTL 过期重算")
+            try:
+                con.row_factory = sqlite3.Row
+                con.executescript(SCHEMA)
+                self.sess(con, "m1")
+                self.usage(con, "r1", "m1", total=100)
+                p1 = zusage._project_usage(con, "m1")
+                self.assertEqual(p1["total"], 100)
+                full = (zusage._db_cache_key(con), ("proj_repo", False))
+                self.assertIn(full, zusage._PROJ_CACHE)
+                self.usage(con, "r2", "m1", turn="t2", total=200)
+                self.assertEqual(zusage._project_usage(con, "m1")["total"], 100, "TTL 内命中旧值")
+                ts, val = zusage._PROJ_CACHE[full]
+                zusage._PROJ_CACHE[full] = (ts - zusage._AGG_TTL_MS - 1, val)
+                self.assertEqual(zusage._project_usage(con, "m1")["total"], 300, "TTL 过期重算")
+            finally:
+                con.close()
             # 内存库不缓存：同一数据每次就地聚合
             mem = self.fixture()
+            self.addCleanup(mem.close)
             self.sess(mem, "m1")
             self.usage(mem, "r1", "m1", total=42)
             self.assertIsNone(zusage._db_cache_key(mem))

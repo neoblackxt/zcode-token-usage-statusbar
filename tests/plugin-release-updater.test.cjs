@@ -395,7 +395,7 @@ test("Release check selects the newest stable package without catalog refresh, d
 
 for (const mode of ["manual", "auto"]) {
   test(`${mode} Release install validates before user-scope commit and sync, then cleans downloads`, async (t) => {
-    const f = fixture(t);
+    const f = fixture(t, mode === "auto" ? { plugin_auto_update: true } : {});
     const known = fs.readFileSync(f.knownFile), config = fs.readFileSync(f.configFile);
     if (mode === "manual") await f.updater.request({ action: "update", path: "/untrusted/ignored" });
     else await f.updater.tick();
@@ -409,7 +409,7 @@ for (const mode of ["manual", "auto"]) {
     assertCleaned(f);
   });
   test(`${mode} Release install respects a disabled plugin`, async (t) => {
-    const f = fixture(t); f.enabled = false;
+    const f = fixture(t, mode === "auto" ? { plugin_auto_update: true } : {}); f.enabled = false;
     if (mode === "manual") await f.updater.request({ action: "update" }); else await f.updater.tick();
     assert.equal(f.updater.status().phase, "available");
     assert.deepEqual(f.events, ["fetch", "list"]); assertNoInstall(f);
@@ -433,7 +433,7 @@ for (const version of ["1.1.0", "2.0.0"]) {
 
 for (const change of ["disable", "newer inventory"]) {
   test(`Release rechecks ${change} after catalog refresh and cleans without installing`, async (t) => {
-    const f = fixture(t);
+    const f = fixture(t, { plugin_auto_update: true });
     f.afterMarket = () => {
       if (change === "disable") writeJson(f.configFile, { plugin_auto_update: false });
       else { f.record.version = "2.0.0"; f.writeRecord(); }
@@ -444,7 +444,7 @@ for (const change of ["disable", "newer inventory"]) {
 }
 
 test("disabling auto while Release preparation awaits prevents install without cancelling cleanup", async (t) => {
-  const f = fixture(t);
+  const f = fixture(t, { plugin_auto_update: true });
   let resume, entered;
   const gate = new Promise((resolve) => { resume = resolve; });
   const started = new Promise((resolve) => { entered = resolve; });
@@ -457,7 +457,7 @@ test("disabling auto while Release preparation awaits prevents install without c
 
 for (const mode of ["manual", "auto"]) {
   test(`${mode} empty formal Release listing refuses development-branch fallback`, async (t) => {
-    const f = fixture(t); f.rows = [];
+    const f = fixture(t, mode === "auto" ? { plugin_auto_update: true } : {}); f.rows = [];
     if (mode === "manual") await f.updater.request({ action: "update" }); else await f.updater.tick();
     assert.equal(f.updater.status().phase, "error"); assert.match(f.updater.status().error, /正式 Release/);
     assert.deepEqual(f.events, ["fetch"]); assertNoInstall(f);
@@ -599,7 +599,7 @@ test("live installer PID keeps committed Release pending across restarts without
 
 for (const failure of ["exception", "success without commit"]) {
   test(`Release installer ${failure} clears uncommitted intent without sync`, async (t) => {
-    const f = fixture(t);
+    const f = fixture(t, { plugin_auto_update: true });
     f.installErrorBeforeCommit = failure === "exception"; f.skipCommit = failure === "success without commit";
     await f.updater.tick();
     assert.equal(f.updater.status().phase, "error"); assert.equal(f.updater.status().pendingSync, false);
@@ -698,7 +698,7 @@ test("user config custom storage supplies Release known source, inventory and ca
 });
 
 test("custom storage Release pending recovers offline after auto update and sync failure without default inventory", async (t) => {
-  const f = fixture(t, {}, true); f.syncError = "fixture custom runtime busy";
+  const f = fixture(t, { plugin_auto_update: true }, true); f.syncError = "fixture custom runtime busy";
   const updater = f.restart(); await updater.tick();
   assert.equal(updater.status().supported, true); assert.equal(updater.status().pendingSync, true);
   assert.deepEqual(readJson(f.recordFile).plugins[0].source, f.catalog.plugins[0].source);
