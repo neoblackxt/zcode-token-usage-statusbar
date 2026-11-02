@@ -27,11 +27,12 @@ class PluginContractTests(unittest.TestCase):
         self.assertEqual(translations["zh-CN"], entry["description"])
         self.assertIn("app.asar", translations["en"])
         self.assertIn("quit", translations["en"])
-        # v172 起自动安装恒开、旧开关不读：英文文案必须表达 always-on 与卸载豁免，
-        # 不得再出现「By default / opt-out respected」的旧开关语义（review 2026-10-31）。
-        self.assertIn("always on", translations["en"])
-        self.assertIn("/uninstall-overlay", translations["en"])
-        self.assertNotIn("opt-out", translations["en"])
+        # clean 分叉：不自动安装——英文文案必须表达显式安装（no auto-install +
+        # /install-overlay）与零上下文注入，不得再出现上游「always on」自动安装语义。
+        self.assertIn("no auto-install", translations["en"])
+        self.assertIn("/install-overlay", translations["en"])
+        self.assertIn("never inject", translations["en"])
+        self.assertNotIn("always on", translations["en"])
         for directory in (".zcode-plugin", ".claude-plugin"):
             manifest = json.loads((PLUGIN / directory / "plugin.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest.get("description_i18n"), translations)
@@ -98,19 +99,18 @@ class PluginContractTests(unittest.TestCase):
         self.assertIs(servers["zusage"]["enabled"], True)
 
     def test_prompt_hook_no_longer_injects_model_instruction(self):
-        # 统计行已改为确定性渲染（overlay.js 经 renderer 只读桥插入），hook 不再要求
-        # 模型自跑 token_rate.py；背景行 / 开关判断通道保留，重启提醒改走
-        # SessionStart 会话级通道（issue #108），prompt-submit 不再注入任何提醒。
+        # clean 分叉：hook 无条件零注入——统计行由前端确定性渲染（overlay.js 经
+        # renderer 只读桥插入），速率背景行注入彻底移除（answer_rate_line 只控制
+        # 纯 UI 统计行），重启提醒由 ⚙ 齿轮红点承载，prompt-submit 不注入任何文字。
         source = (PLUGIN / "hooks/prompt-submit.py").read_text(encoding="utf-8")
         module = prompt_hook()
         self.assertFalse(hasattr(module, "turn_stats_instruction"), source[:200])
         # "restart_notice" 用于捕捉 verbatim 回退：导入行会被 except 静默吞掉、行为
         # 与修复版一致，只有源码文本契约能在那种形态下转红——不要当误报删掉。
         for banned in ("本轮统计指令", "运行一次:", "Markdown 引用块", "RATE_SCRIPT",
-                       "base64", "shlex", "restart_notice"):
+                       "base64", "shlex", "restart_notice", "【内部背景·勿展示】"):
             self.assertNotIn(banned, source, banned)
-        for required in ("【内部背景·勿展示】", "answer_rate_line",
-                         "write_session_state", "emit"):
+        for required in ("answer_rate_line", "write_session_state", "emit"):
             self.assertIn(required, source, required)
         self.assertTrue(hasattr(module, "rate_line_enabled"))
         self.assertTrue(hasattr(module, "emit"))
