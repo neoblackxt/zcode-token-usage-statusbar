@@ -362,7 +362,7 @@ function createUpdater(options) {
   }
   function refreshLocal() {
     const config = readConfig(configFile);
-    state.auto = !!config && (!Object.prototype.hasOwnProperty.call(config, "plugin_auto_update") || config.plugin_auto_update === true);
+    state.auto = !!config && config.plugin_auto_update === true;   // clean 分叉：缺省关，显式 true 才自动更新
     let record = null;
     localError = "";
     try { record = installedRecord(); } catch (error) { localError = error.message; }

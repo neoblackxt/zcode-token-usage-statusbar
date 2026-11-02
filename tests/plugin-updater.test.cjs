@@ -70,17 +70,18 @@ test("list overview accepts both real CLI list shapes, keeps foreign diagnostics
   assert.deepEqual(listOverview({ available: [] }).installed, []); // envelope may omit installed
   for (const junk of ["garbage", null, 7, { diagnostics: [] }, {}]) assert.throws(() => listOverview(junk), /无法识别/);
 });
-test("missing auto setting defaults to on and tick checks plus installs", async (t) => {
+test("missing auto setting defaults to off and tick never checks or installs (clean fork)", async (t) => {
+  // clean 分叉：plugin_auto_update 缺省关（上游为缺省开）；显式 true 的检查+安装链见下方的 auto-enable 用例
   const f = fixture(t); const before = fs.readFileSync(f.configFile, "utf8");
   await f.updater.tick();
-  assert.equal(f.updater.status().auto, true); assert.equal(f.updater.status().phase, "updated");
-  assert.deepEqual(f.calls, [["marketplace", "update", "zusage-marketplace"], ["list", "--available"], ["update", PLUGIN_ID]]);
+  assert.equal(f.updater.status().auto, false); assert.equal(f.updater.status().phase, "idle");
+  assert.deepEqual(f.calls, []);
   assert.equal(fs.readFileSync(f.configFile, "utf8"), before);
 });
-test("missing config defaults to on without writing unrelated settings", async (t) => {
+test("missing config defaults to off without writing unrelated settings (clean fork)", async (t) => {
   const f = fixture(t); fs.unlinkSync(f.configFile);
   await f.updater.tick();
-  assert.equal(f.updater.status().auto, true); assert.equal(f.updater.status().phase, "updated");
+  assert.equal(f.updater.status().auto, false); assert.equal(f.updater.status().phase, "idle");
   assert.equal(fs.existsSync(f.configFile), false);
 });
 test("explicit false stays off across restarts and tick does not contact marketplace", async (t) => {
@@ -172,7 +173,7 @@ test("auto checks are throttled for one hour across ticks and loader restarts", 
 test("hourly checks reuse saved millisecond lastAttempt rather than checkedAt", async (t) => {
   for (const [elapsed, due] of [[3599999, false], [3600000, true], [3600001, true], [1800000, false], [7200000, true]]) {
     await t.test(`elapsed ${elapsed}ms`, async (t) => {
-      const f = fixture(t); f.set({ version: "1.0.0" });
+      const f = fixture(t, { plugin_auto_update: true }); f.set({ version: "1.0.0" });
       const stateFile = path.join(f.runtime, "plugin-update.json");
       const lastAttempt = f.options.now() - elapsed;
       const saved = JSON.stringify({ lastAttempt, checkedAt: f.options.now() });
@@ -186,7 +187,8 @@ test("hourly checks reuse saved millisecond lastAttempt rather than checkedAt", 
   }
 });
 test("automatic check re-reads a recent cross-instance attempt after acquiring the lock", async (t) => {
-  const f = fixture(t);
+  // clean 分叉：自动检查缺省关，被测的节流重读链需显式开启才走到取锁分支
+  const f = fixture(t, { plugin_auto_update: true });
   const stateFile = path.join(f.runtime, "plugin-update.json");
   const recent = JSON.stringify({ lastAttempt: f.options.now() - 1800000 });
   fs.writeFileSync(stateFile, JSON.stringify({ lastAttempt: f.options.now() - 7200000 }));
@@ -459,7 +461,7 @@ test("automatic install re-reads cross-instance opt-out after marketplace check"
   assert.equal(f.calls.filter((c) => c[0] === "update").length, 0);
 });
 test("disable is persisted while a check is busy and prevents automatic install", async (t) => {
-  const f = fixture(t); let resume, entered;
+  const f = fixture(t, { plugin_auto_update: true }); let resume, entered;
   const gate = new Promise((resolve) => { resume = resolve; });
   const started = new Promise((resolve) => { entered = resolve; });
   const u = createUpdater({ ...f.options, cli: async (args) => { entered(); await gate; return f.options.cli(args); } });
@@ -505,7 +507,7 @@ test("persistent restart marker survives updater restart and throttled backgroun
   assert.equal(u.status().restartRequired, true);
 });
 test("uncommitted installer failures are errors, never sync, and permit next automatic retry", async (t) => {
-  const f = fixture(t); let attempts = 0;
+  const f = fixture(t, { plugin_auto_update: true }); let attempts = 0;
   const u = createUpdater({ ...f.options, cli: async (args) => {
     if (args[0] !== "update") return f.options.cli(args);
     attempts++; throw new Error("install failed before commit");
@@ -515,7 +517,7 @@ test("uncommitted installer failures are errors, never sync, and permit next aut
   await u.tick(); assert.equal(attempts, 2); assert.equal(f.syncs.length, 0);
 });
 test("CLI success without a newer official inventory commit is not successful update", async (t) => {
-  const f = fixture(t);
+  const f = fixture(t, { plugin_auto_update: true });
   const u = createUpdater({ ...f.options, cli: async (args) => args[0] === "update" ? { ok: true } : f.options.cli(args) });
   await u.tick(); assert.equal(u.status().phase, "error"); assert.match(u.status().error, /未提交/);
   assert.equal(f.syncs.length, 0); assert.equal(u.status().pendingSync, false);
@@ -539,7 +541,7 @@ test("uncommitted intent with auto disabled clears without networking or claimin
   assert.equal(f.calls.length, 0); assert.equal(f.syncs.length, 0);
 });
 test("disable after installer start saves opt-out without cancelling already-launched commit", async (t) => {
-  const f = fixture(t); let resume, entered;
+  const f = fixture(t, { plugin_auto_update: true }); let resume, entered;
   const gate = new Promise((resolve) => { resume = resolve; });
   const started = new Promise((resolve) => { entered = resolve; });
   const u = createUpdater({ ...f.options, cli: async (args) => {
@@ -554,12 +556,12 @@ test("disable after installer start saves opt-out without cancelling already-lau
 });
 test("hot-reload opt-out marks changed overlay or usage only, not unchanged or tools", async (t) => {
   for (const changed of [[], ["usage_mcp.py"], ["overlay.js"], ["zusage.py"]]) {
-    const f = fixture(t, { hot_reload: false }); f.set({ changed });
+    const f = fixture(t, { plugin_auto_update: true, hot_reload: false }); f.set({ changed });
     await f.updater.tick(); assert.equal(f.updater.status().restartRequired, changed.includes("overlay.js") || changed.includes("zusage.py"));
   }
 });
 test("current sync report marker is not re-recorded by legacy fallback", async (t) => {
-  const f = fixture(t); const marker = path.join(f.runtime, ".plugin-restart-required");
+  const f = fixture(t, { plugin_auto_update: true }); const marker = path.join(f.runtime, ".plugin-restart-required");
   const u = createUpdater({ ...f.options, sync: async () => {
     fs.writeFileSync(marker, JSON.stringify({ createdAt: 1, hashes: { "plugin-updater.cjs": "saved" } }));
     return { changed: ["plugin-updater.cjs"], restartRecorded: true };
@@ -568,7 +570,7 @@ test("current sync report marker is not re-recorded by legacy fallback", async (
   assert.equal(u.status().restartRequired, true);
 });
 test("marker write failure leaves pending intent for retry and never clears reminder", async (t) => {
-  const f = fixture(t); const marker = path.join(f.runtime, ".plugin-restart-required");
+  const f = fixture(t, { plugin_auto_update: true }); const marker = path.join(f.runtime, ".plugin-restart-required");
   fs.mkdirSync(marker); f.set({ changed: ["inject-main.cjs"] });
   await f.updater.tick(); assert.equal(f.updater.status().phase, "error"); assert.equal(f.updater.status().pendingSync, true);
   assert.equal(JSON.parse(fs.readFileSync(path.join(f.runtime, "plugin-update.json"))).pendingVersion, "1.0.0");
@@ -577,7 +579,7 @@ test("marker write failure leaves pending intent for retry and never clears remi
   assert.equal(f.calls.filter((c) => c[0] === "update").length, 1);
 });
 test("invalid sync JSON report keeps coordination pending", async (t) => {
-  const f = fixture(t); const u = createUpdater({ ...f.options, sync: async () => null });
+  const f = fixture(t, { plugin_auto_update: true }); const u = createUpdater({ ...f.options, sync: async () => null });
   await u.tick(); assert.equal(u.status().phase, "error"); assert.equal(u.status().pendingSync, true);
 });
 test("null or damaged inventory cannot crash updater or trigger official install", async (t) => {
@@ -588,13 +590,14 @@ test("null or damaged inventory cannot crash updater or trigger official install
   }
 });
 test("dead legacy wx lock is ignored without deletion and stale file remains", async (t) => {
-  const f = fixture(t); const old = path.join(f.runtime, "plugin-update.lock");
+  const f = fixture(t, { plugin_auto_update: true }); const old = path.join(f.runtime, "plugin-update.lock");
   fs.writeFileSync(old, JSON.stringify({ pid: 2147483647, createdAt: 1 }));
   await f.updater.tick(); assert.equal(f.updater.status().phase, "updated");
   assert.equal(fs.existsSync(old), true); assert.equal(fs.existsSync(path.join(f.runtime, "plugin-update-v2.lock")), true);
 });
 test("missing Python helper errors are visible and do not leave updater busy", async (t) => {
-  const f = fixture(t, { python_path: path.join(os.tmpdir(), "missing-zusage-python") });
+  // clean 分叉：自动检查缺省关，helper 报错链需显式开启才触发取锁
+  const f = fixture(t, { plugin_auto_update: true, python_path: path.join(os.tmpdir(), "missing-zusage-python") });
   await f.updater.tick(); assert.equal(f.updater.status().phase, "error"); assert.equal(f.updater.status().busy, false);
   assert.equal(f.calls.length, 0);
 });

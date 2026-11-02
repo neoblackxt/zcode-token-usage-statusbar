@@ -293,72 +293,76 @@ class PluginUpgradeTests(unittest.TestCase):
         stub.entry_bytes_of = lambda _: self.body + line * 2
         self.assertFalse(self.installer.injected_status(stub))
 
-    def test_first_session_installs_and_ignores_legacy_auto_install_switch(self):
-        # v172：自动安装恒开——plugin_auto_install_overlay/ZUSAGE_PLUGIN_AUTO_INSTALL 已移除，
-        # 遗留值只被保留不被消费；安装成功与待加载均不再注入会话文字（红点承载）。
+    def test_first_session_stays_uninstalled_and_ignores_legacy_auto_install_switch(self):
+        # clean 分叉反转：首会话未注入不自动安装——asar 保持官方字节、config 不被写入；
+        # 遗留 plugin_auto_install_overlay / ZUSAGE_PLUGIN_AUTO_INSTALL 无语义，值只保留不消费。
         os.environ["ZUSAGE_PLUGIN_ASAR"] = str(self.asar)
-        result, _ = self.hook()
-        self.assertTrue(self.installer.injected_status(self.pi))
-        self.assertNotIn("systemMessage", result)
-        self.assertNotIn("plugin_auto_install_overlay", self.config())
-        self.assertEqual(self.config()["asar_path"], str(self.asar))
+        result, errors = self.hook()
+        self.assertFalse(self.installer.injected_status(self.pi))
+        self.assertEqual(self.pi.entry_bytes_of(self.asar), self.body)
+        self.assertEqual(result, {"suppressOutput": True})
+        self.assertIn("不自动安装", errors)
+        self.assertFalse((self.runtime / "config.json").exists())
         for config in ({"plugin_auto_install_overlay": False},
                        {"plugin_auto_install_overlay": "true"}):
             self.write_asar(self.asar)
             self.write_config(config)
             result, _ = self.hook()
-            self.assertTrue(self.installer.injected_status(self.pi))
-            self.assertNotIn("systemMessage", result)
+            self.assertFalse(self.installer.injected_status(self.pi))
+            self.assertEqual(result, {"suppressOutput": True})
             self.assertEqual(self.config()["plugin_auto_install_overlay"], config["plugin_auto_install_overlay"])
+            self.assertNotIn("asar_path", self.config())
         self.write_config({"plugin_auto_install_overlay": False})
         os.environ["ZUSAGE_PLUGIN_AUTO_INSTALL"] = "1"
         self.write_asar(self.asar)
         result, _ = self.hook()
-        self.assertTrue(self.installer.injected_status(self.pi))
-        self.assertNotIn("systemMessage", result)
+        self.assertFalse(self.installer.injected_status(self.pi))
+        self.assertEqual(result, {"suppressOutput": True})
         self.assertIs(self.config()["plugin_auto_install_overlay"], False)
 
     def test_default_install_preserves_corrupt_config_and_ignores_legacy_env(self):
-        # v172：损坏配置不被重建但安装照常；遗留 ZUSAGE_PLUGIN_AUTO_INSTALL=0 不再被
-        # 消费；optout 豁免仍是唯一的静默出口（阻止重注入）。
+        # clean 分叉反转：损坏配置不被重建、也不触发安装（本就没有自动安装）；
+        # 遗留 ZUSAGE_PLUGIN_AUTO_INSTALL=0 与 optout 豁免都不改变零安装行为。
         os.environ["ZUSAGE_PLUGIN_ASAR"] = str(self.asar)
         self.runtime.mkdir()
         config = self.runtime / "config.json"
         for content in ('{bad', '[]', 'null'):
             self.write_asar(self.asar)
             config.write_text(content, encoding="utf-8")
-            self.hook()
+            self.assertEqual(self.hook()[0], {"suppressOutput": True})
             self.assertEqual(config.read_text(), content)
-            self.assertTrue(self.installer.injected_status(self.pi))
+            self.assertFalse(self.installer.injected_status(self.pi))
         config.unlink()
         os.environ["ZUSAGE_PLUGIN_AUTO_INSTALL"] = "0"
         self.write_asar(self.asar)
         self.hook()
-        self.assertTrue(self.installer.injected_status(self.pi))
+        self.assertFalse(self.installer.injected_status(self.pi))
         os.environ.pop("ZUSAGE_PLUGIN_AUTO_INSTALL")
         (self.runtime / ".plugin-overlay-optout").write_text("1")
         self.write_asar(self.asar)
         self.assertEqual(self.hook()[0], {"suppressOutput": True})
         self.assertFalse(self.installer.injected_status(self.pi))
 
-    def test_clean_first_session_installs_and_prompt_stays_notice_free(self):
-        # v172：首会话未注入直接自动安装（不再有安装提醒文字）；issue #108 约束不变——
-        # prompt-submit 在待加载状态也不注入提醒；CLI（/install-overlay 反馈）给重启提醒直至 ack。
+    def test_clean_first_session_needs_explicit_install_and_prompt_stays_notice_free(self):
+        # clean 分叉反转：首会话未注入只打 stderr 日志；issue #108 约束升级为
+        # prompt-submit 无条件零注入；重启提醒文案仅由 /install-overlay CLI 反馈承载直至 ack。
         os.environ["ZUSAGE_PLUGIN_ASAR"] = str(self.asar)
-        result, _ = self.hook()
-        self.assertTrue(self.installer.injected_status(self.pi))
-        self.assertNotIn("systemMessage", result)
+        result, errors = self.hook()
+        self.assertFalse(self.installer.injected_status(self.pi))
+        self.assertEqual(result, {"suppressOutput": True})
+        self.assertIn("不自动安装", errors)
         prompt = subprocess.run([sys.executable, str(PLUGIN_ROOT / "hooks" / "prompt-submit.py")],
                                 input="{}", capture_output=True, text=True, timeout=10)
         self.assertEqual(prompt.returncode, 0, prompt.stderr)
         context = json.loads(prompt.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertNotIn("用户可见·", context)
+        self.assertEqual(context, "")
         self.assertNotIn("插件提醒", context)
-        self.assertIn("【内部背景·勿展示】", context)
         self.assertNotIn("本轮统计指令", context)
-        context = self.notice_context(self.runtime)
-        self.assertIn("用户可见·重启提醒", context)
-        self.assertIn("完全退出 ZCode", context)
+        self.assertEqual(self.notice_context(self.runtime), "")
+        code, output, _ = self.main("install")   # 显式安装是唯一入口
+        self.assertEqual(code, 0)
+        self.assertTrue(self.installer.injected_status(self.pi))
+        self.assertIn("请完全退出 ZCode", self.notice.reminder(self.runtime)["message"])
         helper = load_module("first_install_runtime_lock", PLUGIN_ROOT / "runtime_lock.py")
         marker = json.loads((self.runtime / ".plugin-restart-required").read_text())
         helper.ack_restart(self.runtime, dict(marker.get("hashes", {}), _loadedAt=marker["publishedAt"] + 1))
@@ -376,27 +380,31 @@ class PluginUpgradeTests(unittest.TestCase):
                                 input="{}", capture_output=True, text=True, timeout=10)
         self.assertEqual(prompt.returncode, 0, prompt.stderr)
         context = json.loads(prompt.stdout)["hookSpecificOutput"]["additionalContext"]
-        self.assertNotIn("用户可见·", context)
-        self.assertIn("【内部背景·勿展示】", context)
+        self.assertEqual(context, "")
+        self.assertNotIn("插件提醒", context)
         self.assertNotIn("本轮统计指令", context)
 
-    def test_client_upgrade_overwrite_reinstalls_and_stays_silent(self):
-        # v172：客户端升级覆盖注入后 hook 一律自动重装修复（遗留开关值不被消费），
-        # 修复与待加载均不注入会话文字；待加载由 marker → 红点承载，ack 后彻底静默。
+    def test_client_upgrade_overwrite_needs_explicit_reinstall_and_stays_silent(self):
+        # clean 分叉反转：客户端升级覆盖注入后 hook 不自动重装——asar 保持官方升级字节；
+        # 修复仅经显式 /install-overlay，完成后无会话文字，ack 后彻底静默。
         self.write_config({"asar_path": str(self.asar)})
         self.assertEqual(self.main("install")[0], 0)
         upgraded = b"export const clientVersion = '2.0.0';\n"
         self.write_asar(self.asar, entry=upgraded, version="2.0.0")
-        result, _ = self.hook()
-        self.assertTrue(self.installer.injected_status(self.pi))
-        self.assertEqual(self.pi.entry_bytes_of(self.asar), upgraded + self.pi.INJECT_LINE.encode())
-        self.assertNotIn("systemMessage", result)
-        self.assertTrue((self.runtime / ".plugin-restart-required").is_file())
-        self.assertEqual(self.pi.entry_bytes_of(self.asar), upgraded + self.pi.INJECT_LINE.encode())
+        result, errors = self.hook()
+        self.assertFalse(self.installer.injected_status(self.pi))
+        self.assertEqual(self.pi.entry_bytes_of(self.asar), upgraded)
+        self.assertEqual(result, {"suppressOutput": True})
+        self.assertIn("不自动安装", errors)
         with mock.patch.object(self.pi, "repack", wraps=self.pi.repack) as repack:
             unchanged, _ = self.hook()
-        self.assertEqual(unchanged, {"suppressOutput": True})   # 已注入 + 待加载：无文字
+        self.assertEqual(unchanged, {"suppressOutput": True})   # 未注入 + 待加载：无文字
         repack.assert_not_called()
+        # 显式重装照常修复旧入口并保留官方升级内容
+        code, _, _ = self.main("install")
+        self.assertEqual(code, 0)
+        self.assertTrue(self.installer.injected_status(self.pi))
+        self.assertEqual(self.pi.entry_bytes_of(self.asar), upgraded + self.pi.INJECT_LINE.encode())
         helper = load_module("upgrade_runtime_lock", PLUGIN_ROOT / "runtime_lock.py")
         published = json.loads((self.runtime / ".plugin-restart-required").read_text())
         helper.ack_restart(self.runtime, dict(published.get("hashes", {}), _loadedAt=published["publishedAt"] + 1))
@@ -411,8 +419,9 @@ class PluginUpgradeTests(unittest.TestCase):
             stream.seek(base + int(asset["offset"]))
             self.assertEqual(stream.read(asset["size"]), b"official resource")
 
-    def test_hook_repairs_old_runtime_paths_and_duplicate_lines_using_real_install(self):
-        # 遗留 plugin_auto_install_overlay 值只保留不消费（v172 开关移除），hook 照常修复。
+    def test_hook_leaves_legacy_runtime_paths_and_duplicate_lines_for_explicit_install(self):
+        # clean 分叉反转：旧注入行/重复注入行不再被 hook 修复——asar 原样保留，
+        # 修复仅经显式 /install-overlay（遗留 plugin_auto_install_overlay 值不消费）。
         self.write_config({"asar_path": str(self.asar), "plugin_auto_install_overlay": True})
         self.pi.set_runtime(self.runtime)
         current = self.pi.INJECT_LINE.encode()
@@ -420,8 +429,13 @@ class PluginUpgradeTests(unittest.TestCase):
         for suffix in (old, old + current, current * 2):
             with self.subTest(suffix=suffix):
                 self.write_asar(self.asar, entry=self.body + suffix)
-                result, _ = self.hook()
-                self.assertNotIn("systemMessage", result)
+                before = self.asar.read_bytes()
+                result, errors = self.hook()
+                self.assertEqual(result, {"suppressOutput": True})
+                self.assertEqual(self.asar.read_bytes(), before)
+                self.assertIn("不自动安装", errors)
+                code, _, _ = self.main("install")   # 显式安装照常修复
+                self.assertEqual(code, 0)
                 self.assertEqual(self.pi.entry_bytes_of(self.asar), self.body + current)
                 self.assertTrue(self.installer.injected_status(self.pi))
 
@@ -476,14 +490,26 @@ class PluginUpgradeTests(unittest.TestCase):
                         mock.patch.object(self.pi, "_prepare_tmp", side_effect=prepare), \
                         mock.patch.object(self.pi, "repack", side_effect=repack):
                     if mode == "auto":
+                        # clean 分叉反转：hook 零发布——意图链一次都不触发，asar 原样；
+                        # 运行时同步意图（若有）只是 pending-sync 记录，绝无 installation/publishedAt。
+                        before = self.asar.read_bytes()
                         self.assertEqual(self.hook()[0], {"suppressOutput": True})
+                        self.assertEqual(self.asar.read_bytes(), before)
                     else:
                         code, output, _ = self.main("install")
                         self.assertEqual(code, 0)
                         self.assertNotIn(self.notice.PREFIX, output)
-                self.assertGreaterEqual(len(starts), 3)
-                self.assertFalse((self.runtime / self.notice.MARKER).exists())
-                self.assertEqual(self.hook()[0], {"suppressOutput": True})
+                if mode == "auto":
+                    self.assertEqual(starts, [])
+                    marker_path = self.runtime / self.notice.MARKER
+                    if marker_path.exists():
+                        sync_intent = json.loads(marker_path.read_text(encoding="utf-8"))
+                        self.assertNotIn("publishedAt", sync_intent)
+                        self.assertNotIn("installation", sync_intent)
+                else:
+                    self.assertGreaterEqual(len(starts), 3)
+                    self.assertFalse((self.runtime / self.notice.MARKER).exists())
+                    self.assertEqual(self.hook()[0], {"suppressOutput": True})
 
     def test_delayed_finalize_blocks_prepublication_start_and_allows_new_boot(self):
         import runtime_lock
@@ -513,7 +539,8 @@ class PluginUpgradeTests(unittest.TestCase):
         self.assertEqual(published["createdAt"], json.loads(before)["createdAt"])
         self.assertGreater(published["publishedAt"], loaded["_loadedAt"])
         self.assertFalse(runtime_lock.ack_restart(self.runtime, loaded)["cleared"])
-        self.assertIn("用户可见·重启提醒", self.notice_context(self.runtime))
+        self.assertIn("请完全退出 ZCode", self.notice.reminder(self.runtime)["message"])
+        self.assertEqual(self.notice_context(self.runtime), "")
         self.assertTrue(runtime_lock.ack_restart(self.runtime, dict(published["hashes"],
             _loadedAt=published["publishedAt"] + 1))["cleared"])
         self.assertEqual(self.hook()[0], {"suppressOutput": True})
@@ -633,7 +660,8 @@ print(json.dumps(operations))
                 self.assertEqual(published["hashes"], merged["hashes"])
                 self.assertIn("publishedAt", published)
                 start = published["publishedAt"] + 1
-                self.assertIn("用户可见·重启提醒", self.notice_context(self.runtime))
+                self.assertIn("请完全退出 ZCode", self.notice.reminder(self.runtime)["message"])
+                self.assertEqual(self.notice_context(self.runtime), "")
                 acknowledged_name = next(iter(published["hashes"]))
                 partial_loaded = {"_loadedAt": start, acknowledged_name: published["hashes"][acknowledged_name]}
                 self.assertFalse(self.ack_process(backend, partial_loaded)["cleared"])
@@ -647,29 +675,33 @@ print(json.dumps(operations))
                 self.assertEqual(self.hook()[0], {"suppressOutput": True})
 
     def test_failed_publication_keeps_intent_without_claiming_installed(self):
+        # clean 分叉反转：hook 不尝试发布——asar 发布一次都不被触发、原样保留，无任何
+        # "自动安装未完成"式提示；发布链只属于显式 /install-overlay（同意图可由其完成）。
         os.environ["ZUSAGE_PLUGIN_ASAR"] = str(self.asar)
         real_replace = os.replace
         before = self.asar.read_bytes()
+        attempted = []
 
         def deny_publication(source, destination):
             if Path(destination) == self.asar:
-                self.assertEqual(json.loads((self.runtime / self.notice.MARKER).read_text())["state"],
-                                 "pending-install")
+                attempted.append("publication attempted")
                 raise OSError("asar denied")
             real_replace(source, destination)
 
         with mock.patch.object(self.pi.os, "replace", side_effect=deny_publication):
-            result, _ = self.hook()
+            result, errors = self.hook()
+        self.assertEqual(attempted, [])   # hook 全程未触碰 asar 发布
         self.assertEqual(self.asar.read_bytes(), before)
-        self.assertIn("自动安装未完成", result["systemMessage"])
-        self.assertNotIn("已安装或更新", result["systemMessage"])
-        self.assertIn("用户可见·安装提醒", self.notice_context(self.runtime))
+        self.assertEqual(result, {"suppressOutput": True})
+        self.assertIn("不自动安装", errors)
         self.assertEqual(json.loads((self.runtime / self.notice.MARKER).read_text())["state"],
-                         "pending-install")
-        self.assertEqual(self.main("install")[0], 0)  # 同一意图可由正常重试完成。
-        self.assertIn("用户可见·重启提醒", self.notice_context(self.runtime))
+                         "pending-sync")   # 仅运行时同步意图，无安装意图
+        self.assertEqual(self.main("install")[0], 0)  # 显式安装完成发布。
+        self.assertIn("请完全退出 ZCode", self.notice.reminder(self.runtime)["message"])
+        self.assertEqual(self.notice_context(self.runtime), "")
 
     def test_intent_write_failure_blocks_even_pending_tmp_publication(self):
+        # clean 分叉反转：hook 不进入安装链——意图记录零调用、待收尾包零生成、asar 原样。
         os.environ["ZUSAGE_PLUGIN_ASAR"] = str(self.asar)
         before = self.asar.read_bytes()
         self.installer.resolve_paths()
@@ -677,11 +709,11 @@ print(json.dumps(operations))
         with mock.patch.object(self.notice, "record_restart", side_effect=OSError("intent denied")), \
                 mock.patch.object(self.pi, "_prepare_tmp") as prepare:
             result, _ = self.hook()
-        prepare.assert_not_called()
+        prepare.assert_not_called()          # 安装链不被进入
+        self.assertEqual(result, {"suppressOutput": True})
         self.assertEqual(self.asar.read_bytes(), before)
         self.assertFalse(self.pi.TMP.exists())
         self.assertFalse(self.pi.TMP_META.exists())
-        self.assertNotIn("已安装或更新", result["systemMessage"])
 
     def test_before_publish_callback_is_optional_and_skipped_for_noop(self):
         os.environ["ZUSAGE_PLUGIN_ASAR"] = str(self.asar)
@@ -742,13 +774,15 @@ print(json.dumps(operations))
         self.assertFalse((self.runtime / "config.json").exists())
 
     def test_update_failure_does_not_block_overlay_install(self):
-        # 更新后台启动失败只走 stderr；遗留开关值不被消费（v172 移除）。
+        # clean 分叉：更新后台启动失败只走 stderr；hook 不安装（overlay 修改仅显式触发，
+        # 遗留 plugin_auto_install_overlay 值不被消费）。
         self.write_config({"asar_path": str(self.asar), "plugin_auto_install_overlay": True})
         self.updater.start_auto_update.side_effect = RuntimeError("update unavailable")
         result, errors = self.hook()
         self.assertNotIn("systemMessage", result)
         self.assertIn("update unavailable", errors)
-        self.assertTrue(self.installer.injected_status(self.pi))
+        self.assertFalse(self.installer.injected_status(self.pi))   # 未注入保持未注入
+        self.assertIn("不自动安装", errors)
 
     def test_hook_starts_update_when_current_injection_is_already_valid(self):
         self.write_config({"asar_path": str(self.asar)})
