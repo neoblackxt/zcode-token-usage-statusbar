@@ -784,18 +784,18 @@ try {
   LOG("plugin updater unavailable:", e.message);
 }
 
-/* ---------- v179 自动压缩阈值引擎补丁：默认关。开启后启动时按 ENGINE_TARGETS 的
- * SHA256 白名单给 <resources>/glm/zcode.cjs 打阈值改道补丁（fail-open/fail-closed
- * 语义详见 engine-patch.cjs 头注）。补丁冷生效（引擎子进程下次 spawn 起用，已运行
- * 会话保持旧阈值）；阈值数值走 autocompact.json 热生效（引擎每轮决策读该文件）。
- * 关闭开关=还原引擎字节。加载失败只少该功能，不拖垮主链。 */
+/* ---------- v179 自动压缩阈值引擎补丁：clean 分叉默认关（显式 true 才打）。开启后
+ * 启动时按 ENGINE_TARGETS 的 SHA256 白名单给 <resources>/glm/zcode.cjs 打阈值改道
+ * 补丁（fail-open/fail-closed 语义详见 engine-patch.cjs 头注）。补丁冷生效（引擎
+ * 子进程下次 spawn 起用，已运行会话保持旧阈值）；阈值数值走 autocompact.json 热生效
+ * （引擎每轮决策读该文件）。关闭开关=还原引擎字节。加载失败只少该功能，不拖垮主链。 */
 try {
   const { createEnginePatcher } = require("./engine-patch.cjs");
   enginePatcher = createEnginePatcher({
     runtime: HERE,
     resourcesPath: process.resourcesPath,
     appVersion: app.getVersion(),   // issue #191：引擎 sha 漂移时按桌面 build 判"引擎被单独热更"
-    isEnabled: () => readCfgCached().auto_compact_patch !== false,   // v188：缺省开（验收反馈），显式 false 关闭
+    isEnabled: () => readCfgCached().auto_compact_patch === true,   // clean 分叉：缺省关，显式 true 才打补丁
     log: (...a) => LOG("[engine-patch]", ...a),
   });
   enginePatcher.syncStartup();

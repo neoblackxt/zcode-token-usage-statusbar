@@ -47,10 +47,13 @@ def installation_status(runtime):
 
 
 def visible_context(label, detail, message):
-    return ("【用户可见·" + label + "】" + detail +
-            "请在下一条最终回复正文的第一行，用 Markdown 引用块原样提醒用户，整条提示加粗并保留红色圆点；"
-            "不要使用会被客户端过滤的 HTML 颜色标签：\n> **" + message + "**" +
-            "\n提醒之后继续回答用户当前问题；不要自行退出或重启客户端。")
+    """clean 分叉：恒返回空串。
+
+    原版会生成"指示模型在回复正文第一行用引用块加粗转述提醒"的行为指令并注入
+    additionalContext——该注入会随对话持久化、污染全部历史回复。clean 分叉的
+    提醒通道只有 systemMessage（仅 UI 展示）与状态条齿轮红点，不经模型上下文。
+    保留函数与签名供既有调用方（_nudge 等）兼容，调用方对空串已做门控。"""
+    return ""
 
 
 def reminder(runtime=None, injected=None, restart_files=()):

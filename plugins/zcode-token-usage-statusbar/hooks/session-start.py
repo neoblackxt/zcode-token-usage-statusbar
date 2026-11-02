@@ -3,8 +3,9 @@
 """SessionStart hook：stdin 收 hook 入参 JSON，stdout 只输出 hook 协议 JSON。
 
 职责（由 overlay_install.run_hook 承担，见其 docstring）：
-  同步运行时文件（热更新）；未注入即自动安装（恒开，v172 起无开关）；待重启/待更新
-  不再注入会话文字，由 ⚙ 齿轮红点承载（plugin-updater 推送 markerAt 代际）。
+  同步运行时文件（热更新）+ 按配置拉起更新检查（缺省关）。clean 分叉不自动安装、
+  不自动补桥：一切客户端文件修改仅经 /install-overlay 显式触发；任何路径都不向
+  模型上下文注入文字（待重启/待更新由 ⚙ 齿轮红点承载）。
 任何异常都转成合法 JSON 输出，绝不抛出、绝不影响会话。
 """
 import json
@@ -54,19 +55,9 @@ def main():
     except Exception as e:  # noqa: BLE001 — hook 绝不能抛
         message = f"zusage 插件自检失败（已忽略）：{e}"
         result = {"suppressOutput": True}
-        try:
-            runtime = Path(os.environ.get("ZUSAGE_PLUGIN_RUNTIME") or Path.home() / ".zcode/zcode-token-usage-statusbar")
-            (runtime / ".plugin-overlay-optout").stat()
-            opted_out = True
-        except FileNotFoundError:
-            opted_out = False
-        except (OSError, RuntimeError):
-            opted_out = True
-        if opted_out:
-            print("[zusage-plugin] " + message, file=sys.stderr)
-        else:
-            result.update(systemMessage=message, hookSpecificOutput={
-                "hookEventName": "SessionStart", "additionalContext": message})
+        # clean 分叉：自检失败只走 stderr 与 systemMessage（仅 UI 展示），不注入模型上下文
+        print("[zusage-plugin] " + message, file=sys.stderr)
+        result.update(systemMessage=message)
     try:
         runtime = Path(os.environ.get("ZUSAGE_PLUGIN_RUNTIME") or Path.home() / ".zcode/zcode-token-usage-statusbar")
         record = {"time": time.time(), "pluginRoot": str(PLUGIN_ROOT),
