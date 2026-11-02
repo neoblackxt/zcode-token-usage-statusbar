@@ -10,7 +10,6 @@
 4) sudo_hint 在 Windows 打印可执行的管理员指引，而不是 unix 的 sudo 命令。
 """
 import contextlib
-import hashlib
 import importlib.util
 import io
 import json
@@ -176,72 +175,13 @@ class BridgePendingTests(unittest.TestCase):
         # 权限场景 1（Program Files 只读 ACL）：stage 构建阶段就 PermissionError——
         # permission 标记的生产端必须钉住，否则 Windows 静默失效可原样回归
         before = self.target.read_bytes()
-        with mock.patch.object(bridge.asar, "bounded_mkstemp",
+        with mock.patch.object(bridge.tempfile, "mkstemp",
                                side_effect=PermissionError(13, "Permission denied")):
             result = bridge.ensure_deployed(self.target)
         self.assertEqual(result["status"], "skipped-error")
         self.assertIs(result.get("permission"), True)
         self.assertEqual(self.target.read_bytes(), before)
         self.assertFalse(list(self.root.glob(".zusage-bridge-*")))
-
-    def test_stage_denial_flags_permission_without_unbounded_retry(self):
-        # issue #360 主症状：tempfile._mkstemp_inner 在 Windows 上吞掉 PermissionError
-        # 换随机名重试——旧形态（3.13.12 及更早、3.12 全线、3.14.0-3.14.3）要求
-        # os.access 报可写（看不见 ACL 恒报可写）、TMP_MAX 取 2^31-1 ≈ 无限挂起；
-        # 新形态（3.13.13+ 与 3.14.4+）自限 20 次、不再挂起——受保护目录上
-        # ensure_deployed 的 stage 创建在旧形态上挂到 SessionStart hook 被宿主 60s
-        # 超时击杀。夹具在 POSIX 宿主复现该路径：chmod 555 目标目录 + 锁文件按既有
-        # 文件预建（目录 555 不阻止打开既有文件）+ TMP_MAX 抬到 Windows 量级（本机
-        # Python 3.13.13+ 自限 20，stdlib 自己就会退出，复现不了「无限」）+ 仅真实
-        # mkstemp 调用窗口内把 os.name 翻成 "nt" 激活 stdlib 特判（finally 即还原，
-        # 避免泄漏进 file_lock 的 nt 分支）；名字序列超过上限即判 stdlib 仍在无限
-        # 换名。修复前 PermissionError 被 stdlib 吞掉、上限触发后以裸 AssertionError
-        # 落进 except Exception（无 permission 标记，本用例红）；修复后 stage 创建
-        # 单次快错并带 permission 标记。
-        if os.name == "nt":
-            self.skipTest("POSIX chmod 夹具在 Windows 上模拟不了受保护目录")
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            self.skipTest("root 对只读目录仍可写，无法模拟权限拒绝")
-        (self.root / "app.asar.zusage.lock").write_bytes(b"")
-        before = self.target.read_bytes()
-        calls = {"n": 0}
-        real_next = tempfile._RandomNameSequence.__next__
-        real_mkstemp = tempfile.mkstemp
-        real_os_name = os.name
-
-        def guarded_next(seq):
-            calls["n"] += 1
-            if calls["n"] > 64:
-                raise AssertionError("ensure_deployed stage retried unboundedly (issue #360 hang)")
-            return real_next(seq)
-
-        def nt_mkstemp(*args, **kwargs):
-            os.name = "nt"
-            try:
-                return real_mkstemp(*args, **kwargs)
-            finally:
-                os.name = real_os_name
-
-        os.chmod(self.root, 0o555)
-        self.addCleanup(os.chmod, self.root, 0o755)
-        with mock.patch.object(tempfile, "TMP_MAX", 2 ** 31 - 1), \
-                mock.patch.object(tempfile._RandomNameSequence, "__next__", guarded_next), \
-                mock.patch.object(tempfile, "mkstemp", nt_mkstemp):
-            result = bridge.ensure_deployed(self.target)
-        self.assertEqual(result["status"], "skipped-error")
-        self.assertIs(result.get("permission"), True)
-        self.assertEqual(self.target.read_bytes(), before)
-        self.assertEqual(calls["n"], 0)   # 快错原语不消耗 stdlib 名字序列
-
-    def test_remove_stage_denial_is_reported_without_retry_loop(self):
-        # 卸载链对称：remove_deployed 的 stage 创建被拒时同样单次快错报告，
-        # 绝不进入 stdlib 的 Windows 换名重试（issue #360 同机制）。
-        self.assertEqual(bridge.ensure_deployed(self.target)["status"], "patched")
-        with mock.patch.object(bridge.asar, "bounded_mkstemp",
-                               side_effect=PermissionError(13, "Permission denied")):
-            result = bridge.remove_deployed(self.target)
-        self.assertEqual(result["status"], "skipped-error")
-        self.assertEqual(bridge.ensure_deployed(self.target)["status"], "present")
 
     def test_publish_crash_keeps_previous_tmp_in_journal(self):
         # 已有合法 TMP 时再次 publish 崩溃于 rename 前：journal 必须记 previous_tmp，
@@ -304,7 +244,6 @@ class OverlayBridgeNoticeTests(unittest.TestCase):
     def pi_stub(self, writable=True):
         pi = mock.Mock()
         pi.ASAR = self.root / "app.asar"
-        pi.RUNTIME = self.runtime
         pi.target_writable.return_value = writable
         return pi
 
@@ -328,44 +267,6 @@ class OverlayBridgeNoticeTests(unittest.TestCase):
         pi.publish_external_pending.assert_called_once_with(
             stage, source=result["source"], operation="install")
         pi.launch_monitor.assert_called_once()
-        # v360（issue #321）：夹具 stage 不是合法 asar → 入口指纹取不到 → 宁缺勿假不写
-        # 标记（没有 installation 的 pending-install 标记 swap 后无法销账，红点会永远亮着）
-        self.assertFalse((self.runtime / ".plugin-restart-required").exists())
-
-    def test_pending_writes_restart_marker_with_installation_fingerprint(self):
-        # v360（issue #321）：合法待收尾包 → pending 落定后写 .plugin-restart-required
-        # （v172 取消会话文字后红点是 pending 唯一用户可见信号），installation 指纹与
-        # 包入口字节一致；publish 先于标记（publish 失败不留下无主标记）。
-        stage = self.root / "stage.asar"
-        rb.archive(stage, extra={"/out/main/index.js": b"console.log('official v1');\n"})
-        result = {"status": "replace-failed", "version": "3.16.2",
-                  "detail": "拒绝访问", "stage": str(stage), "source": {"sha256": "x"}}
-        bridge_module = mock.Mock()
-        bridge_module.ensure_deployed.return_value = result
-        pi = self.pi_stub()
-        spec = importlib.util.spec_from_file_location(
-            "bridge_marker_patch_install", str(ROOT / "patch_install.py"))
-        real_pi = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(real_pi)
-        pi.entry_bytes_of = real_pi.entry_bytes_of
-        seen = {}
-
-        def fake_publish(*args, **kwargs):
-            seen["marker_at_publish"] = (self.runtime / ".plugin-restart-required").exists()
-            return {"validated": True}
-        pi.publish_external_pending.side_effect = fake_publish
-        with mock.patch.dict(sys.modules, {"renderer_bridge": bridge_module}), \
-                self.ensure_quiet_env():
-            with contextlib.redirect_stderr(io.StringIO()):
-                outcome = self.installer.ensure_renderer_bridge(pi, quiet_monitor=True)
-        self.assertEqual(outcome["status"], "pending")
-        self.assertIs(seen["marker_at_publish"], False)
-        marker_path = self.runtime / ".plugin-restart-required"
-        marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        self.assertEqual(marker["state"], "pending-install")
-        self.assertEqual(marker["installation"],
-                         {"asar": str(pi.ASAR.resolve()),
-                          "entryHash": hashlib.sha256(real_pi.entry_bytes_of(stage)).hexdigest()})
 
     def test_pending_publish_failure_falls_back_to_skipped_error_and_cleans_stage(self):
         stage = self.root / "stage.asar"
@@ -461,31 +362,21 @@ class OverlayBridgeNoticeTests(unittest.TestCase):
                 self.ensure_quiet_env():
             with contextlib.redirect_stdout(io.StringIO()) as stdout:
                 outcome = self.installer.run_hook()
-        return outcome, stdout.getvalue()
+        return outcome, stdout.getvalue(), bridge_module
 
     def test_run_hook_reports_permission_but_not_pending_or_other_errors(self):
-        # v172：桥 pending（客户端退出后监控自动收尾）不再发会话文字。
-        pending = {"status": "pending", "version": "3.16.2", "detail": ""}
-        outcome, stdout = self.hook_output(pending)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        # v258：SessionStart 自动链（quiet_hook=True）且注入行在位时，桥缺席/打不上
-        # 静默放行——fiber 兜底 + 渲染端运行时合成桥接手，DB 轮询保底；受保护目录
-        # 权限不再向会话注入提权打扰（stderr 诊断行仍在）。
-        denied = {"status": "skipped-error", "version": None,
-                  "detail": "[WinError 5] 拒绝访问", "permission": True}
-        outcome, stdout = self.hook_output(denied, writable=True)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        unknown = {"status": "skipped-unknown", "version": "9.9.9", "detail": "unregistered asset"}
-        outcome, stdout = self.hook_output(unknown)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        # 无权限标记的普通失败仍走 stderr 静默（版本不识别等），不打扰用户
-        plain = dict(denied); plain.pop("permission")
-        outcome, stdout = self.hook_output(plain)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
+        # clean 分叉反转：hook 不自动补桥——pending/权限不足/普通失败三种结果都不再由
+        # hook 产生可见提示（桥仅随显式 /install-overlay 部署）；stdout 恒纯 hook JSON。
+        for bridge_result in ({"status": "pending", "version": "3.16.2", "detail": ""},
+                              {"status": "skipped-error", "version": None,
+                               "detail": "[WinError 5] 拒绝访问", "permission": True},
+                              {"status": "skipped-error", "version": None,
+                               "detail": "[WinError 5] 拒绝访问"}):
+            with self.subTest(status=bridge_result["status"]):
+                outcome, stdout, bridge_module = self.hook_output(bridge_result)
+                self.assertEqual(outcome, {"suppressOutput": True})
+                self.assertEqual(stdout, "")
+                bridge_module.ensure_deployed.assert_not_called()
 
     def test_bridge_permission_notice_kept_for_explicit_cli(self):
         # v258：静默降级只作用于 hook 自动链；显式安装（quiet_hook=False）保留 issue #67
@@ -606,25 +497,29 @@ class PendingInstallWaitingTests(unittest.TestCase):
                 mock.patch.object(self.installer, "sync_runtime", return_value={"changed": []}), \
                 mock.patch.object(self.installer, "injected_status", return_value=False), \
                 mock.patch.object(self.installer, "save_runtime_config"), \
-                mock.patch.object(self.installer, "_install_overlay", return_value=False), \
+                mock.patch.object(self.installer, "_install_overlay", return_value=False) as install, \
                 mock.patch.dict(os.environ, {"ZUSAGE_NO_MONITOR": "1", "ZUSAGE_MONITOR_QUIET": ""}):
             with contextlib.redirect_stdout(io.StringIO()) as stdout, \
                     contextlib.redirect_stderr(io.StringIO()):
                 outcome = self.installer.run_hook()
         self.assertEqual(stdout.getvalue(), "")
-        return outcome
+        return outcome, install
 
     def test_pending_hint_keeps_no_retry_promise_on_writable_target(self):
-        outcome = self.hook(writable=True)
-        self.assertIn("无需重试安装", outcome["systemMessage"])
+        # clean 分叉反转：自动安装（及其「无需重试」承诺）整体消失——可写目标上的
+        # 待收尾状态不由 hook 评估，_install_overlay 零调用、零提示。
+        outcome, install = self.hook(writable=True)
+        self.assertEqual(outcome, {"suppressOutput": True})
+        install.assert_not_called()
+        self.assertNotIn("systemMessage", outcome)
 
     def test_pending_hint_on_protected_target_demands_elevated_rerun(self):
-        outcome = self.hook(writable=False)
-        message = outcome["systemMessage"]
-        self.assertNotIn("无需重试安装", message)
-        self.assertIn("管理员" if os.name == "nt" else "sudo", message)
-        self.assertIn("overlay_install.py", message)
-        self.assertIn("install", message)
+        # clean 分叉反转：受保护目标同样不给提权重跑指引——hook 无安装行为，
+        # 待收尾包的处置交由显式 /install-overlay 与监控链。
+        outcome, install = self.hook(writable=False)
+        self.assertEqual(outcome, {"suppressOutput": True})
+        install.assert_not_called()
+        self.assertNotIn("systemMessage", outcome)
 
 
 class RealHookChainTests(unittest.TestCase):
@@ -673,10 +568,13 @@ class RealHookChainTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_hook_stdout_stays_pure_json_through_real_pending_chain(self):
+        # clean 分叉反转：已注入路径的 hook 不再补桥——即使桥的就地替换会被系统拒绝，
+        # hook 也不进入该链：asar 原样、待收尾包零生成、监控零拉起，stdout 恒纯 JSON。
         real_replace = bridge.os.replace
         # pi.ASAR 经 set_target resolve（macOS 上 /var→/private/var 符号链接会改写
         # 路径），拒绝判定必须与 resolve 后的目标比较
         refused_target = self.pi.ASAR
+        before = self.target.read_bytes()
 
         def replace_refused(stage, destination):
             if Path(destination) == refused_target:
@@ -693,29 +591,10 @@ class RealHookChainTests(unittest.TestCase):
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
                 outcome = self.installer.run_hook()
         self.assertEqual(stdout.getvalue(), "", "hook stdout 只能是 hook JSON")
-        # v172：桥 pending 不再发会话文字（客户端退出后监控自动收尾）；
-        # 待收尾包与监控拉起行为不变。
-        self.assertNotIn("systemMessage", outcome)
-        self.assertTrue(self.pi.TMP.is_file())
-        self.assertEqual(self.pi.pending_tmp(operation="install")["operation"], "install")
-        self.pi.launch_monitor.assert_called_once()
-        # v360（issue #321）：桥 pending 落定即写重启标记（红点唯一信号源），
-        # installation 指纹与待收尾包入口字节一致——swap 时 publish_install 才能认领。
-        marker_path = self.runtime / ".plugin-restart-required"
-        self.assertTrue(marker_path.is_file(), "桥 pending 必须写 .plugin-restart-required")
-        marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        self.assertEqual(marker["state"], "pending-install")
-        self.assertEqual(marker["installation"]["asar"], str(self.pi.ASAR.resolve()))
-        self.assertEqual(marker["installation"]["entryHash"],
-                         hashlib.sha256(self.pi.entry_bytes_of(self.pi.TMP)).hexdigest())
-        # 全生命周期：客户端退出收尾 swap → publishedAt 落账 → loader ack 销账（红点熄灭）
-        self.assertTrue(self.pi.finalize_tmp(operation="install"))
-        marker = json.loads(marker_path.read_text(encoding="utf-8"))
-        self.assertIn("publishedAt", marker, "swap 后必须按标记记账 publishedAt")
-        import runtime_lock
-        ack = runtime_lock.ack_restart(self.runtime, {"_loadedAt": marker["publishedAt"] + 5000})
-        self.assertEqual(ack, {"ok": True, "cleared": True})
-        self.assertFalse(marker_path.exists())
+        self.assertEqual(outcome, {"suppressOutput": True})
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertFalse(self.pi.TMP.is_file())
+        self.pi.launch_monitor.assert_not_called()
 
 
 class SudoHintWindowsTests(unittest.TestCase):
@@ -754,67 +633,6 @@ class SudoHintWindowsTests(unittest.TestCase):
         self.assertIn("sudo", text)
         self.assertIn("HOME=", text)
         self.assertIn("remove", text)
-
-    def test_protected_dir_without_lock_file_reads_present_and_unknown_status(self):
-        # 受保护目录上无既有 app.asar.zusage.lock（或锁文件归管理员/root 所有）时：
-        # 1) 提权安装已打好桥后，普通会话 ensure_deployed 只读识别 present，不误报 skipped-error；
-        # 2) 宿主升级到未登记版本且无法自动推导时，只读识别 skipped-unknown，保留兼容性提醒（issue #247）；
-        # 3) 确实需要打补丁写入时，仍报 skipped-error + permission=True。
-        if os.name == "nt":
-            self.skipTest("POSIX chmod 夹具在 Windows 上模拟不了受保护目录")
-        if hasattr(os, "geteuid") and os.geteuid() == 0:
-            self.skipTest("root 对只读目录仍可写，无法模拟权限拒绝")
-        protected = self.root / "protected"
-        protected.mkdir()
-        asar_path = protected / "app.asar"
-        with mock.patch.object(bridge, "HOST_TARGETS",
-                               [rb.synthetic_target(bridge.NEWEST, rb.MINI)]):
-            rb.archive(asar_path)
-            self.assertEqual(bridge.ensure_deployed(asar_path)["status"], "patched")
-            (protected / "app.asar.zusage.lock").unlink(missing_ok=True)
-            os.chmod(protected, 0o555)
-            self.addCleanup(os.chmod, protected, 0o755)
-            self.assertEqual(bridge.ensure_deployed(asar_path)["status"], "present")
-            remove_denied = bridge.remove_deployed(asar_path)
-            self.assertEqual(remove_denied["status"], "skipped-error")
-            self.assertIs(remove_denied.get("permission"), True)
-            os.chmod(protected, 0o755)
-            rb.archive(asar_path)
-            (protected / "app.asar.zusage.lock").unlink(missing_ok=True)
-            os.chmod(protected, 0o555)
-            denied = bridge.ensure_deployed(asar_path)
-            self.assertEqual(denied["status"], "skipped-error")
-            self.assertIs(denied.get("permission"), True)
-            self.assertEqual(bridge.remove_deployed(asar_path)["status"], "absent")
-            os.chmod(protected, 0o755)
-            rb.archive(asar_path, version="9.9.9", module=b"console.log('unregistered');")
-            (protected / "app.asar.zusage.lock").unlink(missing_ok=True)
-            os.chmod(protected, 0o555)
-            unknown = bridge.ensure_deployed(asar_path)
-            self.assertEqual(unknown["status"], "skipped-unknown")
-            self.assertEqual(unknown["version"], "9.9.9")
-            self.assertEqual(bridge.remove_deployed(asar_path)["status"], "skipped-unknown")
-
-    def test_lock_denied_with_failing_readonly_inspect_keeps_permission_flag(self):
-        # 锁失败后只读检查自身出错（坏 asar、读档异常）时，无法证明无需写盘：
-        # 按锁失败原语义上报 skipped-error 并保留 permission 标记供提权指引，
-        # 不得落入无标记的通用错误分支（issue #67 场景 1）。
-        import runtime_lock
-        asar_path = self.root / "app.asar"
-        with mock.patch.object(runtime_lock, "file_lock",
-                               side_effect=PermissionError(5, "lock denied")), \
-                mock.patch.object(bridge, "_inspect_deploy",
-                                  side_effect=bridge.BridgeError("bad archive")):
-            denied = bridge.ensure_deployed(asar_path)
-        self.assertEqual(denied["status"], "skipped-error")
-        self.assertIs(denied.get("permission"), True)
-        with mock.patch.object(runtime_lock, "file_lock",
-                               side_effect=PermissionError(5, "lock denied")), \
-                mock.patch.object(bridge, "_inspect_remove",
-                                  side_effect=bridge.BridgeError("bad archive")):
-            denied = bridge.remove_deployed(asar_path)
-        self.assertEqual(denied["status"], "skipped-error")
-        self.assertIs(denied.get("permission"), True)
 
 
 if __name__ == "__main__":

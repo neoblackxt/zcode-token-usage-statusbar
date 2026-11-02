@@ -5,6 +5,7 @@
 首次真实查询才撞列缺失，与 ZCode 升级改列的现场一致。
 """
 import contextlib
+import gc
 import importlib.util
 import io
 import sqlite3
@@ -38,6 +39,9 @@ class SchemaDriftHintTests(unittest.TestCase):
                     mock.patch.object(zusage, "_LANG", "zh"), \
                     contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                 code = zusage.main(["today"])
+            # zusage 异常路径的连接经引用环存活到 GC；Windows 不许删除被占用的
+            # sqlite 文件，临时目录清理前先回收（POSIX 无此限制，多余但无害）。
+            gc.collect()
         self.assertEqual(code, 1)
         self.assertNotIn("Traceback", output.getvalue() + errors.getvalue())
         self.assertIn("查询失败", output.getvalue())

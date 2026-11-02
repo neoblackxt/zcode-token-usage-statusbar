@@ -495,18 +495,21 @@ class PluginRuntimeTests(unittest.TestCase):
                 self.run_main("install")
             self.assertEqual(exit_code.exception.code, 0)   # 安装照常成功
             bridge.ensure_deployed.assert_called_once()
-        # 已注入路径的 hook 同样不被桥故障拖垮
+        # clean 分叉：已注入路径的 hook 不再自动补桥——桥故障无从影响 hook，
+        # 结果精确锁定 {"suppressOutput": True}，stdout 协议不被污染。
         with mock.patch.dict(sys.modules, {"renderer_bridge": bridge}), \
                 mock.patch.object(installer, "resolve_paths", return_value=(self.runtime, self.patch_install_stub())), \
                 mock.patch.object(installer, "injected_status", return_value=True):
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 result = installer.run_hook()
-        self.assertTrue(result["suppressOutput"] or "hookSpecificOutput" in result)
+        self.assertEqual(result, {"suppressOutput": True})
         self.assertEqual(output.getvalue(), "")   # stdout 协议不被污染
-        self.assertEqual(bridge.ensure_deployed.call_count, 2)
+        self.assertEqual(bridge.ensure_deployed.call_count, 1)   # 仅 CLI install 调过；hook 不补桥
 
     def test_hook_automatic_install_also_deploys_bridge(self):
+        # clean 分叉反转：未注入时 hook 不安装、也不补桥——桥只能随 /install-overlay
+        # 显式安装（ensure_renderer_bridge 的唯一 hook 外调用方）部署。
         bridge = mock.Mock()
         bridge.ensure_deployed.return_value = {"status": "present", "version": "3.16.1", "detail": ""}
         patch_install = self.patch_install_stub()
@@ -516,8 +519,9 @@ class PluginRuntimeTests(unittest.TestCase):
                 mock.patch.object(installer, "injected_status", side_effect=[False, True]):
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                 result = installer.run_hook()
-        self.assertEqual(result, {"suppressOutput": True})   # v172 安装成功不再注入会话文字（红点承载）；精确锁形防夹带键
-        bridge.ensure_deployed.assert_called_with(patch_install.ASAR)
+        self.assertEqual(result, {"suppressOutput": True})   # 精确锁形防夹带键
+        patch_install.install.assert_not_called()            # 不自动安装
+        bridge.ensure_deployed.assert_not_called()           # 不自动补桥
 
     def test_check_still_checks_asar_without_syncing(self):
         patch_install = self.patch_install_stub()
@@ -579,16 +583,12 @@ class PluginRuntimeTests(unittest.TestCase):
         self.assertEqual(result, {"suppressOutput": True})
 
     def test_hook_automatic_install_keeps_protocol_output_clean(self):
+        # clean 分叉反转：hook 不自动安装——asar 不被触碰、install 永不执行，
+        # 未注入提示只走 stderr 日志行；stdout 仍是纯 hook JSON。
         patch_install = self.patch_install_stub()
 
         def install_overlay(before_publish=None):
-            import runtime_lock
-            installation = {"asar": str(patch_install.ASAR), "entryHash": "a" * 64}
-            before_publish(installation)
-            with runtime_lock.publish_install(self.runtime, installation):
-                pass
-            print("human-readable install log")
-            return True
+            raise AssertionError("hook must not auto-install in the clean fork")
 
         patch_install.install.side_effect = install_overlay
         output, errors = io.StringIO(), io.StringIO()
@@ -596,48 +596,35 @@ class PluginRuntimeTests(unittest.TestCase):
                 mock.patch.object(installer, "injected_status", side_effect=[False, True]), \
                 contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             result = installer.run_hook()
-        self.assertEqual(result, {"suppressOutput": True})   # v172 安装成功不再注入会话文字；精确锁形防夹带键
+        self.assertEqual(result, {"suppressOutput": True})   # 精确锁形防夹带键
         self.assertEqual(output.getvalue(), "")
-        self.assertIn("human-readable install log", errors.getvalue())
+        patch_install.install.assert_not_called()
+        self.assertIn("不自动安装", errors.getvalue())
 
     def test_hook_monitor_flags_are_scoped_and_restored_on_success_or_failure(self):
+        # clean 分叉反转：hook 无安装/补桥动作，全程不设置也不还原监控静默标志；
+        # 无论进入前环境如何，hook 运行前后这些变量保持原样（无污染、无残留）。
         for previous in ({}, {"ZUSAGE_NO_MONITOR": "custom", "ZUSAGE_MONITOR_QUIET": "0"}):
-            for fail in (False, True):
-                with self.subTest(previous=previous, fail=fail):
-                    patch_install = self.patch_install_stub()
-
-                    def install_overlay(before_publish=None):
-                        self.assertEqual(os.environ["ZUSAGE_NO_MONITOR"], "1")
-                        self.assertEqual(os.environ["ZUSAGE_MONITOR_QUIET"], "1")
-                        if fail:
-                            raise RuntimeError("install failed")
-                        import runtime_lock
-                        installation = {"asar": str(patch_install.ASAR), "entryHash": "a" * 64}
-                        before_publish(installation)
-                        with runtime_lock.publish_install(self.runtime, installation):
-                            pass
-                        return True
-
-                    patch_install.install.side_effect = install_overlay
-                    # 清空环境时仍须给 hook 保留可解析的家目录（Windows 的 Path.home()
-                    # 依赖 USERPROFILE，缺失会 RuntimeError）与系统关键变量。
-                    environment = dict(previous,
-                                       HOME=str(self.root), USERPROFILE=str(self.root),
-                                       ZUSAGE_PLUGIN_RUNTIME=str(self.runtime),
-                                       **{name: os.environ[name] for name in
-                                          ("SystemRoot", "TEMP", "TMP")
-                                          if os.name == "nt" and name in os.environ})
-                    with mock.patch.object(installer, "resolve_paths", return_value=(self.runtime, patch_install)), \
-                            mock.patch.object(installer, "injected_status", side_effect=[False, True]), \
-                            mock.patch.dict(os.environ, environment, clear=True), \
-                            contextlib.redirect_stderr(io.StringIO()):
-                        result = installer.run_hook()
-                        for name in ("ZUSAGE_NO_MONITOR", "ZUSAGE_MONITOR_QUIET"):
-                            self.assertEqual(os.environ.get(name), previous.get(name))
-                    if fail:
-                        self.assertIn("自检失败", result["systemMessage"])
-                    else:
-                        self.assertNotIn("systemMessage", result)   # v172 成功安装无会话文字
+            with self.subTest(previous=previous):
+                patch_install = self.patch_install_stub()
+                patch_install.install.side_effect = AssertionError("hook must not auto-install")
+                # 清空环境时仍须给 hook 保留可解析的家目录（Windows 的 Path.home()
+                # 依赖 USERPROFILE，缺失会 RuntimeError）与系统关键变量。
+                environment = dict(previous,
+                                   HOME=str(self.root), USERPROFILE=str(self.root),
+                                   ZUSAGE_PLUGIN_RUNTIME=str(self.runtime),
+                                   **{name: os.environ[name] for name in
+                                      ("SystemRoot", "TEMP", "TMP")
+                                      if os.name == "nt" and name in os.environ})
+                with mock.patch.object(installer, "resolve_paths", return_value=(self.runtime, patch_install)), \
+                        mock.patch.object(installer, "injected_status", return_value=False), \
+                        mock.patch.dict(os.environ, environment, clear=True), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    result = installer.run_hook()
+                    for name in ("ZUSAGE_NO_MONITOR", "ZUSAGE_MONITOR_QUIET"):
+                        self.assertEqual(os.environ.get(name), previous.get(name))
+                self.assertEqual(result, {"suppressOutput": True})   # 无 systemMessage，无夹带键
+                patch_install.install.assert_not_called()
 
     def lock_stub(self, acquired):
         @contextlib.contextmanager
@@ -725,19 +712,28 @@ class PluginRuntimeTests(unittest.TestCase):
         self.assertIn("probe boom", errors)
 
     def test_hook_optout_and_record_failure_are_preserved(self):
+        # clean 分叉：optout 不再改变 hook 行为（无安装行为可豁免）；未注入同样只打
+        # stderr 日志；运行时记录写失败转 systemMessage（stderr + UI 通道，不注入上下文）。
         self.write_file(self.runtime / ".plugin-overlay-optout", b"1")
         patch_install = self.patch_install_stub()
         with mock.patch.object(installer, "resolve_paths", return_value=(self.runtime, patch_install)), \
                 mock.patch.object(installer, "injected_status", return_value=False):
-            self.assertEqual(installer.run_hook(), {"suppressOutput": True})
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                self.assertEqual(installer.run_hook(), {"suppressOutput": True})
+            self.assertIn("不自动安装", errors.getvalue())
             with mock.patch.object(installer.os, "replace", side_effect=OSError("record denied")):
-                result = installer.run_hook()
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    result = installer.run_hook()
         patch_install.install.assert_not_called()
-        self.assertEqual(result, {"suppressOutput": True})
+        self.assertEqual(result, {"suppressOutput": True, "systemMessage": mock.ANY})
+        self.assertIn("record denied", result["systemMessage"])
+        self.assertNotIn("hookSpecificOutput", result)
 
     def test_uninstalled_hook_installs_despite_legacy_nudge(self):
-        # v172：自动安装恒开——旧 .plugin-overlay-nudge 与遗留 env 都不再有任何语义；
-        # 未注入时 hook 每次都尝试安装，通用失败维持重试提示。
+        # clean 分叉反转：未注入时 hook 不再安装——旧 .plugin-overlay-nudge 同样无语义；
+        # 三次 SessionStart 均零安装、零提示，asar 与配置不被触碰。
         self.write_file(self.runtime / ".plugin-overlay-nudge", b"1")
         pi = self.patch_install_stub()
         pi.install.return_value = False
@@ -745,24 +741,25 @@ class PluginRuntimeTests(unittest.TestCase):
         with mock.patch.object(installer, "resolve_paths", return_value=(self.runtime, pi)), \
                 mock.patch.object(installer, "injected_status", return_value=False):
             for _ in range(3):
-                result = installer.run_hook()
-                self.assertIn("自动安装未完成", result["systemMessage"])
-                self.assertIn("install-overlay", result["hookSpecificOutput"]["additionalContext"])
-                self.assertNotIn("请完全退出 ZCode", result["systemMessage"])
-        self.assertEqual(pi.install.call_count, 3)
+                result, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                    self.assertEqual(installer.run_hook(), {"suppressOutput": True})
+                self.assertIn("不自动安装", errors.getvalue())
+        self.assertEqual(pi.install.call_count, 0)
 
     def test_failed_automatic_install_repeats_actionable_context(self):
+        # clean 分叉反转：不存在"自动安装失败"路径——install 根本不被调用，
+        # 每轮 SessionStart 结果恒为 {"suppressOutput": True}，无任何会话文字。
         pi = self.patch_install_stub()
         pi.install.return_value = False
-        # 通用失败（无有效待收尾包，issue #120 的判据不成立）：维持重试提示。
         pi.pending_tmp.side_effect = Exception("no valid pending package")
         with mock.patch.object(installer, "resolve_paths", return_value=(self.runtime, pi)), \
                 mock.patch.object(installer, "injected_status", return_value=False):
             for _ in range(2):
                 result = installer.run_hook()
-                self.assertIn("自动安装未完成", result["systemMessage"])
-                self.assertNotIn("只出现一次", result["systemMessage"])
-                self.assertIn("install-overlay", result["hookSpecificOutput"]["additionalContext"])
+                self.assertEqual(result, {"suppressOutput": True})
+                self.assertNotIn("只出现一次", json.dumps(result))
+        pi.install.assert_not_called()
 
     def test_optout_suppresses_hook_output_even_with_existing_injection(self):
         self.write_file(self.runtime / ".plugin-overlay-optout", b"1")
@@ -1001,10 +998,14 @@ class PluginRuntimeTests(unittest.TestCase):
                 self.sync()
         self.assertTrue((self.runtime / notice.MARKER).is_file())
         self.assertFalse((self.runtime / "inject-main.cjs").exists())
+        # clean 分叉：不可确认的记录只保留在 message（CLI/UI 通道）；context 恒空串，
+        # 模型上下文拿不到任何"已成功/已自动安装/同步尚未完成"式叙述。
+        got = notice.reminder(self.runtime)
+        self.assertNotIn("已成功", got["message"])
+        self.assertNotIn("已自动安装", got["message"])
+        self.assertIn("还没有完成", got["message"])
         context = notice_context(self.runtime)
-        self.assertNotIn("已成功", context)
-        self.assertNotIn("已自动安装", context)
-        self.assertIn("同步尚未完成", context)
+        self.assertEqual(context, "")
         json.loads(json.dumps({"hookSpecificOutput": {"additionalContext": context}}, ensure_ascii=False))
 
     def test_explicit_install_with_existing_injection_retains_target_hash_marker(self):
@@ -1054,14 +1055,17 @@ class PluginRuntimeTests(unittest.TestCase):
                 with self.assertRaises(SystemExit) as exited:
                     installer.main()
         self.assertEqual(exited.exception.code, 0)
-        cli_notice = notice_context(self.runtime, injected=True)
-        self.assertIn("install-overlay", cli_notice)
-        self.assertNotIn("请完全退出 ZCode", cli_notice)
-        # CLI stdout 打印的是 message 本体（模型可见 context 由 reminder()["context"] 承载）
-        self.assertEqual(output.getvalue().strip(), notice.reminder(self.runtime, injected=True)["message"])
+        cli_notice = notice.reminder(self.runtime, injected=True)
+        self.assertIn("install-overlay", cli_notice["message"])
+        self.assertNotIn("请完全退出 ZCode", cli_notice["message"])
+        self.assertEqual(cli_notice["context"], "")
+        # CLI stdout 打印的是 message 本体（模型上下文恒零注入）
+        self.assertEqual(output.getvalue().strip(), cli_notice["message"])
         self.assertNotIn("已安装或更新", output.getvalue())
 
     def test_optout_errors_are_stderr_only_without_probe_or_config_write(self):
+        # clean 分叉反转：豁免标记不再压制诊断——sync 失败一律 stderr + systemMessage
+        # （仅 UI 展示）；异常路径不探测注入状态、不写 config。
         self.write_file(self.runtime / ".plugin-overlay-optout", b"1")
         for error in (OSError("read-only runtime"), TimeoutError("lock busy"), ValueError("bad record")):
             with self.subTest(error=error), \
@@ -1070,12 +1074,20 @@ class PluginRuntimeTests(unittest.TestCase):
                     mock.patch.object(installer, "injected_status", side_effect=AssertionError("probe")), \
                     mock.patch.object(installer, "save_runtime_config", side_effect=AssertionError("config write")), \
                     contextlib.redirect_stderr(io.StringIO()) as errors:
-                self.assertEqual(installer.run_hook(), {"suppressOutput": True})
+                result = installer.run_hook()
+                self.assertEqual(result, {"suppressOutput": True,
+                                          "systemMessage": "zusage 插件自检失败（已忽略）：" + str(error)})
                 self.assertIn(str(error), errors.getvalue())
+                self.assertNotIn("hookSpecificOutput", result)
+        # 正常路径：探测注入状态决定是否补 config；未注入只打 stderr 日志行，不写 config
         with mock.patch.object(installer, "resolve_paths", return_value=(self.runtime, self.patch_install_stub())), \
-                mock.patch.object(installer, "injected_status", side_effect=AssertionError("probe")), \
-                mock.patch.object(installer, "save_runtime_config", side_effect=AssertionError("config write")):
-            self.assertEqual(installer.run_hook(), {"suppressOutput": True})
+                mock.patch.object(installer, "injected_status", return_value=False) as probe, \
+                mock.patch.object(installer, "save_runtime_config", side_effect=AssertionError("config write")), \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            result = installer.run_hook()
+        self.assertEqual(result, {"suppressOutput": True})
+        probe.assert_called_once()
+        self.assertIn("不自动安装", errors.getvalue())
 
     def test_actual_process_transaction_blocks_old_hook_until_new_baseline_commits(self):
         self.sync()
