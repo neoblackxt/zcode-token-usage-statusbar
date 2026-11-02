@@ -5,7 +5,7 @@
 **模型速度、token 用量、上下文与套餐额度，一眼看到。**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Windows](https://img.shields.io/badge/-Windows-0078D6?logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTAsMEgxMS4zNzdWMTEuMzcySDBaTTEyLjYyMywwSDI0VjExLjM3MkgxMi42MjNaTTAsMTIuNjIzSDExLjM3N1YyNEgwWm0xMi42MjMsMEgyNFYyNEgxMi42MjMiLz48L3N2Zz4%3D)](https://github.com/ByteRax/zcode-token-usage-statusbar) [![macOS](https://img.shields.io/badge/-macOS-000000?logo=apple&logoColor=white)](https://github.com/ByteRax/zcode-token-usage-statusbar) [![Linux](https://img.shields.io/badge/-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/ByteRax/zcode-token-usage-statusbar)
+[![Windows](https://img.shields.io/badge/-Windows-0078D6?logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTAsMEgxMS4zNzdWMTEuMzcySDBaTTEyLjYyMywwSDI0VjExLjM3MkgxMi42MjNaTTAsMTIuNjIzSDExLjM3N1YyNEgwWm0xMi42MjMsMEgyNFYyNEgxMi42MjMiLz48L3N2Zz4%3D)](https://github.com/neoblackxt/zcode-token-usage-statusbar) [![macOS](https://img.shields.io/badge/-macOS-000000?logo=apple&logoColor=white)](https://github.com/neoblackxt/zcode-token-usage-statusbar) [![Linux](https://img.shields.io/badge/-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/neoblackxt/zcode-token-usage-statusbar)
 [![QQ 群](https://img.shields.io/badge/QQ-129554306-12B7F5?logo=qq&logoColor=white)](https://qm.qq.com/q/l43Xj8P7mE) [![微信](https://img.shields.io/badge/%E5%BE%AE%E4%BF%A1-ByteRax-07C160?logo=wechat&logoColor=white)](#-交流与反馈)
 
 给 [ZCode](https://zcode.z.ai) 桌面版用的第三方增强插件，提供速度状态栏、用量查询和界面增强；市场名称仍为 **ZCode Token Usage Statusbar**，仓库地址与命令不变。
@@ -34,7 +34,7 @@ A community toolkit for ZCode desktop: generation speed, token usage, context tr
 把下面这段话发给 ZCode，安装或更新插件：
 
 ```text
-请安装或更新并启用 ZCode 插件：https://github.com/ByteRax/zcode-token-usage-statusbar#plugin-releases
+请安装或更新并启用 ZCode 插件：https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases
 完成后，在 ZCode 对话中执行 /install-overlay；确认状态条安装成功后，提醒我完全退出并重新打开 ZCode（仅关闭窗口不算），不要自动重启。
 若安装失败，请说明原因；若当前会话无法执行该命令，请提示我手动执行，不要跳过这一步或声称安装成功。
 ```
@@ -54,12 +54,12 @@ A community toolkit for ZCode desktop: generation speed, token usage, context tr
 如果安装成功并完全重启后仍看不到状态条，可把这句话发给 ZCode：
 
 ```text
-请排查 https://github.com/ByteRax/zcode-token-usage-statusbar 插件的状态条或工具栏 chip 未显示的原因，先检查插件启用状态、安装结果、实际加载路径及相关开关。修改客户端文件前先征求我确认；需要反馈时，整理脱敏后的复现步骤与诊断摘要，待我确认后再提交到 https://github.com/ByteRax/zcode-token-usage-statusbar/issues，不要上传凭据或完整本地日志。
+请排查 https://github.com/neoblackxt/zcode-token-usage-statusbar 插件的状态条或工具栏 chip 未显示的原因，先检查插件启用状态、安装结果、实际加载路径及相关开关。修改客户端文件前先征求我确认；需要反馈时，整理脱敏后的复现步骤与诊断摘要，待我确认后再提交到 https://github.com/neoblackxt/zcode-token-usage-statusbar/issues，不要上传凭据或完整本地日志。
 ```
 
 ### 手机远控页面（当前源码功能）
 
-在打开远控页的浏览器中，通过 Tampermonkey 等用户脚本管理器[安装正式版手机脚本](https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js)。在桌面状态条 **⚙ → 维护 → 移动端远程控制** 开启默认关闭的「推送状态栏数据到远控页」，再开启宿主「Web 远程控制」并打开 `https://zcode.z.ai/remote/`。
+在打开远控页的浏览器中，通过 Tampermonkey 等用户脚本管理器[安装正式版手机脚本](https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/main/zusage-mobile.user.js)。在桌面状态条 **⚙ → 维护 → 移动端远程控制** 开启默认关闭的「推送状态栏数据到远控页」，再开启宿主「Web 远程控制」并打开 `https://zcode.z.ai/remote/`。
 
 安装地址提供 `main` 根目录的发布快照，可能落后于桌面源码。请使用支持同一中继协议的桌面插件，正式渠道可用性以对应 Release 说明为准。安装、数据范围与排障见[手机远控指南](docs/user-guide.md#手机远控页面)。
 
@@ -196,16 +196,16 @@ asar 注入），装法见[宿主适配文档](docs/hosts.md#7-在-workbuddy-客
 欢迎修复问题、完善文档、开发扩展，或分享使用建议。感谢每一位贡献者，也感谢帮助定位问题、测试版本和支持项目的人。
 
 <p align="center">
-  <a href="https://github.com/ByteRax/zcode-token-usage-statusbar">
+  <a href="https://github.com/neoblackxt/zcode-token-usage-statusbar">
     <img src="https://contrib.rocks/image?repo=ByteRax/zcode-token-usage-statusbar" alt="ZCodeBox 代码贡献者头像墙" width="100%">
   </a>
 </p>
 
 ## Star History
 
-如果 ZCodeBox 对你有帮助，欢迎 [点一颗 Star](https://github.com/ByteRax/zcode-token-usage-statusbar)。
+如果 ZCodeBox 对你有帮助，欢迎 [点一颗 Star](https://github.com/neoblackxt/zcode-token-usage-statusbar)。
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ByteRax/zcode-token-usage-statusbar&type=Date)](https://www.star-history.com/#ByteRax/zcode-token-usage-statusbar&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=neoblackxt/zcode-token-usage-statusbar&type=Date)](https://www.star-history.com/#neoblackxt/zcode-token-usage-statusbar&Date)
 
 ## 许可证与免责声明
 

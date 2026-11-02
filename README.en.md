@@ -5,7 +5,7 @@
 **Model speed, token usage, context and plan quota — at a glance.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Windows](https://img.shields.io/badge/-Windows-0078D6?logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTAsMEgxMS4zNzdWMTEuMzcySDBaTTEyLjYyMywwSDI0VjExLjM3MkgxMi42MjNaTTAsMTIuNjIzSDExLjM3N1YyNEgwWm0xMi42MjMsMEgyNFYyNEgxMi42MjMiLz48L3N2Zz4%3D)](https://github.com/ByteRax/zcode-token-usage-statusbar) [![macOS](https://img.shields.io/badge/-macOS-000000?logo=apple&logoColor=white)](https://github.com/ByteRax/zcode-token-usage-statusbar) [![Linux](https://img.shields.io/badge/-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/ByteRax/zcode-token-usage-statusbar)
+[![Windows](https://img.shields.io/badge/-Windows-0078D6?logo=data:image/svg%2Bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZmZmZiIgZD0iTTAsMEgxMS4zNzdWMTEuMzcySDBaTTEyLjYyMywwSDI0VjExLjM3MkgxMi42MjNaTTAsMTIuNjIzSDExLjM3N1YyNEgwWm0xMi42MjMsMEgyNFYyNEgxMi42MjMiLz48L3N2Zz4%3D)](https://github.com/neoblackxt/zcode-token-usage-statusbar) [![macOS](https://img.shields.io/badge/-macOS-000000?logo=apple&logoColor=white)](https://github.com/neoblackxt/zcode-token-usage-statusbar) [![Linux](https://img.shields.io/badge/-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/neoblackxt/zcode-token-usage-statusbar)
 [![QQ 群](https://img.shields.io/badge/QQ-129554306-12B7F5?logo=qq&logoColor=white)](https://qm.qq.com/q/l43Xj8P7mE) [![微信](https://img.shields.io/badge/%E5%BE%AE%E4%BF%A1-ByteRax-07C160?logo=wechat&logoColor=white)](#-community)
 
 A third-party toolkit for the [ZCode](https://zcode.z.ai) desktop app, with a speed status bar, usage queries and UI enhancements. Its marketplace name remains **ZCode Token Usage Statusbar**; repository URLs and commands are unchanged.
@@ -32,7 +32,7 @@ Promotional image with staged UI and demonstration data; the actual interface va
 Send this to ZCode to install or update the plugin:
 
 ```text
-Please install or update and enable this ZCode plugin: https://github.com/ByteRax/zcode-token-usage-statusbar#plugin-releases
+Please install or update and enable this ZCode plugin: https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases
 Then run /install-overlay in the ZCode chat. Once you confirm the status bar installation succeeded, remind me to quit ZCode completely and reopen it (closing the window is not enough); do not restart it automatically.
 If installation fails, explain why. If you cannot run the command in the current session, ask me to run it manually; do not skip this step or claim installation succeeded.
 ```
@@ -52,12 +52,12 @@ Keep `#plugin-releases` / `#plugin-releases-gitcode` in the URLs: they select th
 If the bar is still missing after a successful installation and full restart, send this to ZCode:
 
 ```text
-Please investigate why the status bar or toolbar chips from https://github.com/ByteRax/zcode-token-usage-statusbar are missing. Check whether the plugin is enabled, installation succeeded, the actual loaded path is correct, and the relevant switches are on. Ask for my confirmation before modifying client files. If a report is needed, prepare redacted reproduction steps and a diagnostic summary, then wait for my approval before submitting to https://github.com/ByteRax/zcode-token-usage-statusbar/issues. Do not upload credentials or complete local logs.
+Please investigate why the status bar or toolbar chips from https://github.com/neoblackxt/zcode-token-usage-statusbar are missing. Check whether the plugin is enabled, installation succeeded, the actual loaded path is correct, and the relevant switches are on. Ask for my confirmation before modifying client files. If a report is needed, prepare redacted reproduction steps and a diagnostic summary, then wait for my approval before submitting to https://github.com/neoblackxt/zcode-token-usage-statusbar/issues. Do not upload credentials or complete local logs.
 ```
 
 ### Mobile remote page (current source feature)
 
-[Install the regular mobile script](https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js) with a userscript manager such as Tampermonkey in the browser you use for remote control. In the desktop status bar, open **⚙ → Maintenance → Mobile remote control** and turn on **Push status bar data to the remote page**, which is off by default. Then enable the host’s **Web Remote Control** and open `https://zcode.z.ai/remote/`.
+[Install the regular mobile script](https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/main/zusage-mobile.user.js) with a userscript manager such as Tampermonkey in the browser you use for remote control. In the desktop status bar, open **⚙ → Maintenance → Mobile remote control** and turn on **Push status bar data to the remote page**, which is off by default. Then enable the host’s **Web Remote Control** and open `https://zcode.z.ai/remote/`.
 
 The install link serves a published snapshot from the root of `main`, which can lag behind desktop source. Use a desktop plugin that supports the same relay protocol and check the desktop Release notes for stable-channel availability. See the [mobile remote guide (Chinese)](docs/user-guide.md#手机远控页面) for setup, data boundaries and troubleshooting.
 
@@ -167,16 +167,16 @@ To make it permanent, set `"host": "workbuddy"` in `config.json` (or `"auto"` to
 Contributions are welcome: fix bugs, improve documentation, develop extensions or share suggestions. Thanks to everyone contributing code, diagnosing problems, testing versions and supporting the project.
 
 <p align="center">
-  <a href="https://github.com/ByteRax/zcode-token-usage-statusbar">
+  <a href="https://github.com/neoblackxt/zcode-token-usage-statusbar">
     <img src="https://contrib.rocks/image?repo=ByteRax/zcode-token-usage-statusbar" alt="ZCodeBox code contributors" width="100%">
   </a>
 </p>
 
 ## Star History
 
-If ZCodeBox is useful to you, consider [starring the repository](https://github.com/ByteRax/zcode-token-usage-statusbar).
+If ZCodeBox is useful to you, consider [starring the repository](https://github.com/neoblackxt/zcode-token-usage-statusbar).
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ByteRax/zcode-token-usage-statusbar&type=Date)](https://www.star-history.com/#ByteRax/zcode-token-usage-statusbar&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=neoblackxt/zcode-token-usage-statusbar&type=Date)](https://www.star-history.com/#neoblackxt/zcode-token-usage-statusbar&Date)
 
 ## License and disclaimer
 

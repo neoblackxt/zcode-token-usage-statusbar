@@ -110,6 +110,9 @@ overlay.js），**均未发现恶意代码**。要点：
 
 - 上游 remote：`upstream`（ByteRax）；分叉 remote：`origin`（neoblackxt）。工作分支 `clean`。
 - **本机市场注册已指向分叉**：`~/.zcode/cli/plugins/known_marketplaces.json` 中 `zusage-marketplace` 的 `source.url` 改为 `https://github.com/neoblackxt/zcode-token-usage-statusbar.git`（ref 仍为 `plugin-releases`；原值备份在同目录 `known_marketplaces.json.bak-*`）。分叉的 `plugin-releases` 分支必须与 `clean` 同步（宿主市场与插件更新器都从它拉取）：**每次升级后执行 `git push origin clean clean:plugin-releases`**（若历史重写过需 `--force`）。这样 ⚙ 面板与宿主插件管理器的"更新"永远拉分叉的 clean 代码，不会误更新到上游官方包。
+- **上游引用处置记录**（2026-11-02 扫描全仓）：
+  - 已转分叉：README×3 的安装口令/Releases 链接/Star History（并声明 clean 分叉无 GitCode 镜像）；`overlay.js` 反馈按钮 issues URL 与"清单回退失败"提示口令（原提示会引导安装上游 GitCode 官方包——已移除该向量）；`marketplace.json` icon CDN（@clean 分支，`tests/test_plugin_contract.py` 断言同步）；`tests/overlay-settings.test.cjs` 的 ISSUES_URL 断言。
+  - **有意保留上游引用**：`plugin-release.cjs` 的 `NOTES_GITCODE_MIRROR`（仅更新日志正文的只读回退源，分叉 git 渠道不触发）；`.zcode/skills/`、`docs/`、AGENTS.md、本文件中的上游链接（审计溯源与上游维护流程文档）；`installed_plugins.json` 安装记录里的 `source.url`（历史溯源，非活动指针，宿主下次从分叉市场更新时会自然重写）；测试中的 `tanranran/...` 字符串（通用链接构造器的夹具数据）。
 - 合并上游新版本时：`git fetch upstream && git merge v1.5.x`，冲突集中在上述改造点文件；
   合并后重跑 `node --check inject-main.cjs plugin-updater.cjs`、
   `python -m py_compile plugins/zcode-token-usage-statusbar/*.py plugins/zcode-token-usage-statusbar/hooks/*.py`、
