@@ -107,7 +107,8 @@ class PluginAutoUpdateTests(unittest.TestCase):
                 self.write_config({"plugin_auto_update": value})
                 self.assert_silent_skip()
 
-    def test_missing_auto_setting_or_config_defaults_to_on(self):
+    def test_missing_auto_setting_or_config_defaults_to_off(self):
+        # clean 分叉：缺省=关（上游 v1.5.9 为缺省开）。只有显式 true 才启动。
         for config in ({}, {"lang": "en", "plugin_auto_install_overlay": False}, None):
             with self.subTest(config=config):
                 self.popen.reset_mock()
@@ -117,8 +118,7 @@ class PluginAutoUpdateTests(unittest.TestCase):
                 else:
                     self.write_config(config)
                 before = path.read_bytes() if path.exists() else None
-                self.assertEqual(self.launch(), (True, ""))
-                self.popen.assert_called_once()
+                self.assert_silent_skip()
                 self.assertEqual(path.read_bytes() if path.exists() else None, before)
                 self.assertEqual(self.asar.read_bytes(), b"test fixture")
 

@@ -94,6 +94,8 @@ class McpConfigTests(unittest.TestCase):
         self.assertIn(installer.MCP_NAME, data["mcp"]["servers"])
         self.assertFalse(list(self.config.parent.glob("*.zusage.tmp")), "不留临时文件")
 
+    @unittest.skipIf(os.name == "nt",
+                     "mode 归位是 POSIX 语义（Windows 的 chmod 只映射只读位，不参与 ACL）")
     def test_atomic_write_preserves_original_file_mode(self):
         import stat as stat_mod
         self.config.write_text(json.dumps({"mcp": {"servers": {}}}), encoding="utf-8")
