@@ -1,23 +1,23 @@
 {
   "name": "zusage-marketplace",
-  "description": "zcode-token-usage-statusbar 插件市场：ZCode token 用量查询（MCP / 命令 / 技能）与自动安装/修复桌面悬浮状态条（始终开启，修改 app.asar，成功后需完全退出并重开）。",
+  "description": "zcode-token-usage-statusbar 插件市场（clean 分叉）：ZCode token 用量查询（MCP / 命令 / 技能）与桌面悬浮状态条（仅经 /install-overlay 显式安装；hook 零上下文注入；自动更新/引擎补丁缺省关闭）。",
   "owner": {
-    "name": "xhwxt/ByteRax",
-    "url": "https://github.com/ByteRax"
+    "name": "neoblackxt (fork of xhwxt/ByteRax)",
+    "url": "https://github.com/neoblackxt"
   },
   "plugins": [
     {
       "name": "zcode-token-usage-statusbar",
       "source": "./plugins/zcode-token-usage-statusbar",
       "icon": "https://cdn.jsdelivr.net/gh/ByteRax/zcode-token-usage-statusbar@main/docs/promo/icon.webp",
-      "description": "ZCode token 用量查询（token_usage MCP 工具 + /usage 命令 + 技能，读本地 usage 数据库）；桌面客户端未注入时始终尝试自动安装/修复悬浮用量状态条（修改 app.asar，成功后需完全退出并重开；旧自动安装开关不再生效，/uninstall-overlay 可阻止自动重注入）；每次回答末尾自动追加逐问速率行（由前端确定性渲染，依赖 renderer 桥；即时 tok/s 含思考、首字延迟、输出 token、生成耗时、段数/峰值与会话累计，--current 守卫防旧数据充数）。",
+      "description": "ZCode token 用量查询（token_usage MCP 工具 + /usage 命令 + 技能，读本地 usage 数据库）；clean 分叉：不自动安装状态条（仅 /install-overlay 显式触发，修改 app.asar，成功后需完全退出并重开）；hook 任何路径都无条件不向模型上下文注入文字（速率背景行注入已彻底移除，answer_rate_line 只控制前端统计行）；后台自动更新缺省关（config plugin_auto_update:true 显式开启）；自动压缩阈值引擎补丁缺省关（config auto_compact_patch:true 显式开启）；卸载时还原全部客户端修改（含引擎补丁）。回答末尾逐问速率行由前端确定性渲染，依赖 renderer 桥。",
       "description_i18n": {
-        "en": "ZCode token usage query via the token_usage MCP tool, /usage command, and skill (reads the local usage DB). Auto-installs the desktop floating usage status bar whenever the client is not injected (always on; legacy auto-install config keys are no longer read; /uninstall-overlay blocks re-injection; modifies app.asar - fully quit and reopen ZCode to take effect). Appends a per-answer rate line at the end of each reply (rendered deterministically via the renderer bridge; tok/s, TTFT, output tokens).",
-        "zh-CN": "ZCode token 用量查询（token_usage MCP 工具 + /usage 命令 + 技能，读本地 usage 数据库）；桌面客户端未注入时始终尝试自动安装/修复悬浮用量状态条（修改 app.asar，成功后需完全退出并重开；旧自动安装开关不再生效，/uninstall-overlay 可阻止自动重注入）；每次回答末尾自动追加逐问速率行（由前端确定性渲染，依赖 renderer 桥；即时 tok/s 含思考、首字延迟、输出 token、生成耗时、段数/峰值与会话累计，--current 守卫防旧数据充数）。"
+        "en": "ZCode token usage query via the token_usage MCP tool, /usage command, and skill (reads the local usage DB). Clean fork: no auto-install of the desktop status bar (explicit /install-overlay only; modifies app.asar - fully quit and reopen ZCode to take effect); hooks never inject text into the model context under any condition (the per-prompt rate background-line injection is removed entirely; answer_rate_line only toggles the deterministic UI stats line); background auto-update defaults off (opt-in via plugin_auto_update:true); auto-compact engine patch defaults off (opt-in via auto_compact_patch:true); uninstall restores every client modification including the engine patch.",
+        "zh-CN": "ZCode token 用量查询（token_usage MCP 工具 + /usage 命令 + 技能，读本地 usage 数据库）；clean 分叉：不自动安装状态条（仅 /install-overlay 显式触发，修改 app.asar，成功后需完全退出并重开）；hook 任何路径都无条件不向模型上下文注入文字（速率背景行注入已彻底移除，answer_rate_line 只控制前端统计行）；后台自动更新缺省关（config plugin_auto_update:true 显式开启）；自动压缩阈值引擎补丁缺省关（config auto_compact_patch:true 显式开启）；卸载时还原全部客户端修改（含引擎补丁）。回答末尾逐问速率行由前端确定性渲染，依赖 renderer 桥。"
       },
       "version": "1.5.18",
       "author": {
-        "name": "xhwxt/ByteRax"
+        "name": "xhwxt/ByteRax (clean fork: neoblackxt)"
       },
       "category": "monitoring",
       "keywords": [
@@ -25,7 +25,8 @@
         "usage",
         "statusbar",
         "monitor",
-        "zusage"
+        "zusage",
+        "clean"
       ]
     }
   ]
