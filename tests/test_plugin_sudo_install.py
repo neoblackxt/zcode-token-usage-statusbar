@@ -9,7 +9,6 @@ import importlib.util
 import io
 import json
 import os
-import pwd
 import struct
 import sys
 import tempfile
@@ -17,6 +16,13 @@ import types
 import unittest
 from pathlib import Path
 from unittest import mock
+
+try:
+    import pwd
+except ImportError:
+    # Windows 无 pwd 模块（sudo 用例的 getpwnam 全部走 mock，桩只需可被打补丁）；
+    # 真实 getpwuid/chown 归还用例按平台跳过（POSIX-only 语义）。
+    pwd = types.SimpleNamespace(getpwnam=lambda name: (_ for _ in ()).throw(KeyError(name)))
 
 
 PLUGIN_ROOT = (Path(__file__).resolve().parents[1] / "plugins" /
@@ -58,6 +64,7 @@ def write_asar(path, entry=b"official;\n", name="zcode-desktop"):
                      encoded + b"\0" * (aligned - len(encoded) - 4) + payload)
 
 
+@unittest.skipIf(os.name == "nt", "sudo/getpwnam/getuid 为 POSIX 语义（Windows 上恒走非 sudo 分支）")
 class SudoRuntimeLocationTests(unittest.TestCase):
     """default_runtime() 必须落在真实用户家目录，而不是 sudo 重置后的 /root。"""
 
@@ -144,6 +151,7 @@ class SudoRuntimeLocationTests(unittest.TestCase):
         pi.set_target.assert_called_once_with(Path("/opt/ZCode/resources/app.asar").resolve())
 
 
+@unittest.skipIf(os.name == "nt", "sudo/getpwnam/getuid 为 POSIX 语义（Windows 上恒走非 sudo 分支）")
 class SudoNodeDiscoveryTests(unittest.TestCase):
     """sudo 清空 PATH 后，验收器仍要能找到 node（含 nvm 与系统位置）。"""
 
@@ -406,7 +414,8 @@ class ReadonlyRemoveTests(unittest.TestCase):
         with self.unwritable():
             code, output, errors = self.run_main("remove")
         self.assertEqual(code, 1)
-        self.assertIn("sudo", output + errors)
+        # 提权指引按平台：POSIX 给 sudo env 命令，Windows 给管理员终端指引
+        self.assertIn("管理员" if os.name == "nt" else "sudo", output + errors)
         self.assertFalse((self.runtime / ".plugin-overlay-optout").exists())
         self.assertTrue(self.pi.ZUSAGE_LINE_RE.search(self.pi.entry_bytes_of(self.asar)))
 
@@ -415,9 +424,14 @@ class ReadonlyRemoveTests(unittest.TestCase):
         with self.unwritable():
             _, output, errors = self.run_main("remove")
         hint = output + errors
-        self.assertIn("sudo", hint)
-        self.assertIn("HOME", hint)
-        self.assertIn("PATH", hint)
+        if os.name == "nt":
+            # Windows 提权形态：管理员终端 + 具体命令，无 HOME/PATH 保留语法
+            self.assertIn("管理员", hint)
+            self.assertIn("overlay_install.py", hint)
+        else:
+            self.assertIn("sudo", hint)
+            self.assertIn("HOME", hint)
+            self.assertIn("PATH", hint)
 
     def test_remove_with_injection_message_suggests_remove_not_install(self):
         """review 发现：提示命令曾写死成 install，会把想卸载的用户引导去重新安装/注入。
@@ -448,6 +462,7 @@ class SudoOwnershipTests(unittest.TestCase):
         self.runtime.mkdir()
         (self.runtime / "overlay.js").write_bytes(b"x")
 
+    @unittest.skipIf(os.name == "nt", "pwd.getpwuid/chown 为 POSIX 语义")
     def test_chown_runtime_hands_files_back_to_sudo_user(self):
         user = pwd.getpwuid(os.getuid())
         with mock.patch.dict(os.environ, {"SUDO_USER": user.pw_name}), \
@@ -459,11 +474,13 @@ class SudoOwnershipTests(unittest.TestCase):
                           mock.call(self.runtime / "overlay.js", user.pw_uid, user.pw_gid)])
 
     def test_chown_runtime_is_noop_without_sudo(self):
+        # create=True：Windows 的 os 无 chown 属性，仅 POSIX 打补丁验证零调用
         with mock.patch.dict(os.environ, {}, clear=True), \
-                mock.patch.object(installer.os, "chown") as chown:
+                mock.patch.object(installer.os, "chown", create=True) as chown:
             installer.chown_runtime_to_user(self.runtime)
         chown.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "pwd.getpwuid/chown 为 POSIX 语义")
     def test_chown_failure_is_not_fatal(self):
         user = pwd.getpwuid(os.getuid())
         with mock.patch.dict(os.environ, {"SUDO_USER": user.pw_name}), \

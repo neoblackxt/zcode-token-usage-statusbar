@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""SessionStart 的独立自动更新 bootstrap；不安装或恢复 asar 注入。"""
+"""SessionStart 的独立自动更新 bootstrap；不安装或恢复 asar 注入。
+
+clean 分叉：自动更新缺省关闭，config.json 显式 plugin_auto_update:true 才启动。"""
 import json
 import os
 from pathlib import Path
@@ -12,10 +14,11 @@ INTERVAL_MS = 60 * 60 * 1000
 
 
 def start_auto_update(runtime, pi, force=False):
-    """默认后台检查更新，保留显式关闭；最终限频与跨进程锁由 Node 负责。
+    """clean 分叉：仅显式开启才后台检查更新；最终限频与跨进程锁由 Node 负责。
 
     force：已装插件版本未登记适配当前宿主 build 时由 run_hook 传入，绕过 1h 限频
-    立即尝试升级（issue #247）；自动更新开关等其余门控仍由本模块与 Node 侧生效。"""
+    立即尝试升级（issue #247）；自动更新开关等其余门控仍由本模块与 Node 侧生效——
+    force 不旁路 clean 分叉的缺省关门控。"""
     try:
         runtime = Path(runtime)
         cfg = json.loads((runtime / "config.json").read_text(encoding="utf-8"))
@@ -23,7 +26,7 @@ def start_auto_update(runtime, pi, force=False):
         cfg = {}
     except (OSError, ValueError, TypeError):
         return False
-    if not isinstance(cfg, dict) or cfg.get("plugin_auto_update", True) is not True:
+    if not isinstance(cfg, dict) or cfg.get("plugin_auto_update", False) is not True:
         return False
 
     # 远程会话或本机 asar 不可读时保持静默，不产生安装/更新提示。

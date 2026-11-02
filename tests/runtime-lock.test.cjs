@@ -71,7 +71,8 @@ test("orphaned official installer keeps recovery waiting until actual child exit
   fs.writeFileSync(path.join(path.dirname(inventory), "known_marketplaces.json"), JSON.stringify({ marketplaces: [
     { id: "zusage-marketplace", source: { source: "directory", path: home } },
   ] }));
-  fs.writeFileSync(path.join(f.runtime, "config.json"), JSON.stringify({ python_path: python }));
+  // clean 分叉：自动更新缺省关，本测试驱动 tick 自动安装链，需显式开启
+  fs.writeFileSync(path.join(f.runtime, "config.json"), JSON.stringify({ python_path: python, plugin_auto_update: true }));
   fs.writeFileSync(bundle, `
     const fs=require('fs'); const inventory=${JSON.stringify(inventory)};
     const args=process.argv.slice(3);
