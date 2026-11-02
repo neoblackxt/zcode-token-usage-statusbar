@@ -87,6 +87,27 @@ overlay.js），**均未发现恶意代码**。要点：
 
 ## 五、维护
 
+### 上游更新通知与升级流程
+
+- **通知渠道**：在 GitHub 上游仓库 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) 页面点 **Watch → Releases only**，上游每发正式版会收到 GitHub 通知/邮件。本分叉的插件自身不检查更新（自动更新缺省关），也不会产生任何更新提示——这是有意设计。
+- **⚠ 宿主插件管理器的"有更新"是陷阱，别点**：上游发布新版本且本机市场刷新后，ZCode 插件管理器会提示"有更新"并允许一键更新——**接受它会把官方包覆盖进缓存安装目录，自动安装、上下文注入等全部入侵行为随之回归**。把这个提示仅当作"上游有新版了"的信号，升级一律走下面的分叉流程。
+- **升级流程**（本地安装目录为插件管理器缓存里的版本目录，如
+  `~/.zcode/cli/plugins/cache/zusage-marketplace/zcode-token-usage-statusbar/1.5.4/`）：
+
+  ```bash
+  cd <本仓库检出目录>
+  git fetch upstream --tags
+  git merge v1.5.x                 # 冲突按 AGENTS.md 首节原则裁剪，不按上游
+  # 四套检查全绿后：
+  python sync_plugin.py --check
+  node --test tests/*.test.cjs --test-timeout=30000
+  python -B -m unittest discover -s tests -p 'test_*.py'
+  # 覆盖缓存目录（保留目录名不变，管理器登记不受影响）：
+  rm -rf "<缓存版本目录>"/* && cp -r plugins/zcode-token-usage-statusbar/. "<缓存版本目录>"/
+  python "<缓存版本目录>/overlay_install.py" sync    # 更新运行时目录
+  # 最后：更新 installed_plugins.json 里该插件的 version 字段，完全退出 ZCode 并重开
+  ```
+
 - 上游 remote：`upstream`（ByteRax）；分叉 remote：`origin`（neoblackxt）。工作分支 `clean`。
 - 合并上游新版本时：`git fetch upstream && git merge v1.5.x`，冲突集中在上述改造点文件；
   合并后重跑 `node --check inject-main.cjs plugin-updater.cjs`、
