@@ -31,11 +31,14 @@ class PluginPackageTests(unittest.TestCase):
 
     def test_default_update_setting_and_bilingual_panel_copy_agree(self):
         config = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
-        self.assertIs(config["plugin_auto_update"], True)
+        self.assertIs(config["plugin_auto_update"], False)   # clean 分叉：缺省关，显式开启
         self.assertNotIn("plugin_auto_install_overlay", config)   # v172：自动安装恒开，开关已移除
         overlay = (ROOT / "overlay.js").read_text(encoding="utf-8")
-        self.assertIn("每 1 小时检查并安装新版，默认开启", overlay)
-        self.assertIn("Check and install every hour; on by default", overlay)
+        self.assertIn("每 1 小时检查并安装新版，clean 分叉默认关闭（勾选后生效）", overlay)
+        self.assertIn("Check and install every hour; off by default in the clean fork", overlay)
+        # 旧自动更新开关文案（宣称默认开启）必须整体消失（其他功能的"默认开启"不受此约束）
+        self.assertNotIn("每 1 小时检查并安装新版，默认开启", overlay)
+        self.assertNotIn("Check and install every hour; on by default", overlay)
         self.assertNotIn("每 24 小时检查", overlay)
         self.assertNotIn("Check and install every 24 hours", overlay)
         self.assertIn("更新器变更需完全退出并重开 ZCode 后生效", overlay)

@@ -10,6 +10,7 @@
 
 运行：python3 -B -m unittest discover -s tests -p 'test_query_robustness.py'
 """
+import gc
 import importlib.util
 import io
 import sqlite3
@@ -140,6 +141,8 @@ class CorruptDbTests(unittest.TestCase):
             out = io.StringIO()
             with mock.patch.object(zusage, "DB_PATH", bad), redirect_stdout(out):
                 rc = zusage.main(["now"])
+            # 异常路径的连接经引用环存活到 GC；Windows 不许删除被占用的 sqlite 文件
+            gc.collect()
             self.assertEqual(rc, 1)
             self.assertIn("查询失败", out.getvalue())
 
