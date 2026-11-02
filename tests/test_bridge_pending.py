@@ -362,27 +362,21 @@ class OverlayBridgeNoticeTests(unittest.TestCase):
                 self.ensure_quiet_env():
             with contextlib.redirect_stdout(io.StringIO()) as stdout:
                 outcome = self.installer.run_hook()
-        return outcome, stdout.getvalue()
+        return outcome, stdout.getvalue(), bridge_module
 
     def test_run_hook_reports_permission_but_not_pending_or_other_errors(self):
-        # v172：桥 pending（客户端退出后监控自动收尾）不再发会话文字；权限不足仍提示。
-        pending = {"status": "pending", "version": "3.16.2", "detail": ""}
-        outcome, stdout = self.hook_output(pending)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        # 权限不足按真实 PermissionError 标记判定（Windows 的 os.access 看不见 ACL，
-        # target_writable() 恒 True 的 Program Files 场景也必须提示）
-        denied = {"status": "skipped-error", "version": None,
-                  "detail": "[WinError 5] 拒绝访问", "permission": True}
-        outcome, stdout = self.hook_output(denied, writable=True)
-        self.assertIn("管理员" if os.name == "nt" else "sudo", outcome["systemMessage"])
-        self.assertIn(str(self.root / "app.asar"), outcome["systemMessage"])
-        self.assertEqual(stdout, "")
-        # 无权限标记的普通失败仍走 stderr 静默（版本不识别等），不打扰用户
-        plain = dict(denied); plain.pop("permission")
-        outcome, stdout = self.hook_output(plain)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
+        # clean 分叉反转：hook 不自动补桥——pending/权限不足/普通失败三种结果都不再由
+        # hook 产生可见提示（桥仅随显式 /install-overlay 部署）；stdout 恒纯 hook JSON。
+        for bridge_result in ({"status": "pending", "version": "3.16.2", "detail": ""},
+                              {"status": "skipped-error", "version": None,
+                               "detail": "[WinError 5] 拒绝访问", "permission": True},
+                              {"status": "skipped-error", "version": None,
+                               "detail": "[WinError 5] 拒绝访问"}):
+            with self.subTest(status=bridge_result["status"]):
+                outcome, stdout, bridge_module = self.hook_output(bridge_result)
+                self.assertEqual(outcome, {"suppressOutput": True})
+                self.assertEqual(stdout, "")
+                bridge_module.ensure_deployed.assert_not_called()
 
     def test_windows_permission_notice_uses_administrator_hint(self):
         denied = {"status": "skipped-error", "version": None,
@@ -473,25 +467,29 @@ class PendingInstallWaitingTests(unittest.TestCase):
                 mock.patch.object(self.installer, "sync_runtime", return_value={"changed": []}), \
                 mock.patch.object(self.installer, "injected_status", return_value=False), \
                 mock.patch.object(self.installer, "save_runtime_config"), \
-                mock.patch.object(self.installer, "_install_overlay", return_value=False), \
+                mock.patch.object(self.installer, "_install_overlay", return_value=False) as install, \
                 mock.patch.dict(os.environ, {"ZUSAGE_NO_MONITOR": "1", "ZUSAGE_MONITOR_QUIET": ""}):
             with contextlib.redirect_stdout(io.StringIO()) as stdout, \
                     contextlib.redirect_stderr(io.StringIO()):
                 outcome = self.installer.run_hook()
         self.assertEqual(stdout.getvalue(), "")
-        return outcome
+        return outcome, install
 
     def test_pending_hint_keeps_no_retry_promise_on_writable_target(self):
-        outcome = self.hook(writable=True)
-        self.assertIn("无需重试安装", outcome["systemMessage"])
+        # clean 分叉反转：自动安装（及其「无需重试」承诺）整体消失——可写目标上的
+        # 待收尾状态不由 hook 评估，_install_overlay 零调用、零提示。
+        outcome, install = self.hook(writable=True)
+        self.assertEqual(outcome, {"suppressOutput": True})
+        install.assert_not_called()
+        self.assertNotIn("systemMessage", outcome)
 
     def test_pending_hint_on_protected_target_demands_elevated_rerun(self):
-        outcome = self.hook(writable=False)
-        message = outcome["systemMessage"]
-        self.assertNotIn("无需重试安装", message)
-        self.assertIn("管理员" if os.name == "nt" else "sudo", message)
-        self.assertIn("overlay_install.py", message)
-        self.assertIn("install", message)
+        # clean 分叉反转：受保护目标同样不给提权重跑指引——hook 无安装行为，
+        # 待收尾包的处置交由显式 /install-overlay 与监控链。
+        outcome, install = self.hook(writable=False)
+        self.assertEqual(outcome, {"suppressOutput": True})
+        install.assert_not_called()
+        self.assertNotIn("systemMessage", outcome)
 
 
 class RealHookChainTests(unittest.TestCase):
@@ -540,10 +538,13 @@ class RealHookChainTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def test_hook_stdout_stays_pure_json_through_real_pending_chain(self):
+        # clean 分叉反转：已注入路径的 hook 不再补桥——即使桥的就地替换会被系统拒绝，
+        # hook 也不进入该链：asar 原样、待收尾包零生成、监控零拉起，stdout 恒纯 JSON。
         real_replace = bridge.os.replace
         # pi.ASAR 经 set_target resolve（macOS 上 /var→/private/var 符号链接会改写
         # 路径），拒绝判定必须与 resolve 后的目标比较
         refused_target = self.pi.ASAR
+        before = self.target.read_bytes()
 
         def replace_refused(stage, destination):
             if Path(destination) == refused_target:
@@ -560,12 +561,10 @@ class RealHookChainTests(unittest.TestCase):
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
                 outcome = self.installer.run_hook()
         self.assertEqual(stdout.getvalue(), "", "hook stdout 只能是 hook JSON")
-        # v172：桥 pending 不再发会话文字（客户端退出后监控自动收尾）；
-        # 待收尾包与监控拉起行为不变。
-        self.assertNotIn("systemMessage", outcome)
-        self.assertTrue(self.pi.TMP.is_file())
-        self.assertEqual(self.pi.pending_tmp(operation="install")["operation"], "install")
-        self.pi.launch_monitor.assert_called_once()
+        self.assertEqual(outcome, {"suppressOutput": True})
+        self.assertEqual(self.target.read_bytes(), before)
+        self.assertFalse(self.pi.TMP.is_file())
+        self.pi.launch_monitor.assert_not_called()
 
 
 class SudoHintWindowsTests(unittest.TestCase):

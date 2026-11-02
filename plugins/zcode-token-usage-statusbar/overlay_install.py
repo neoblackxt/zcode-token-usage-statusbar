@@ -712,11 +712,15 @@ def chown_runtime_to_user(runtime):
 
 
 def _nudge(output, message):
+    """clean 分叉：仅 systemMessage（UI 展示）。visible_context 恒为空串，不再向
+    模型上下文下达"在回复正文转述提醒"的指令；保留函数形状供既有调用方兼容。"""
     from restart_notice import visible_context
     output["systemMessage"] = message
-    output["hookSpecificOutput"] = {
-        "hookEventName": "SessionStart",
-        "additionalContext": visible_context("安装提醒", "状态条安装尚未完成。", message)}
+    context = visible_context("安装提醒", "状态条安装尚未完成。", message)
+    if context:
+        output["hookSpecificOutput"] = {
+            "hookEventName": "SessionStart",
+            "additionalContext": context}
     return output
 
 
@@ -855,7 +859,11 @@ def _pending_install_waiting(pi):
 
 
 def _revive_orphan_pending(pi):
-    """孤儿待收尾包自愈（issue #228）：publish 后 launch_monitor 的去重检查（锁被
+    """clean 分叉注：本函数保留但 run_hook 不接线——SessionStart 自动补拉监控属
+    自动行为；孤儿待收尾包的分叉恢复路径是重跑 /install-overlay（显式链自带
+    pending 复用与监控拉起）。上游在 run_hook 的 st 分支调用它。
+
+    孤儿待收尾包自愈（issue #228）：publish 后 launch_monitor 的去重检查（锁被
     持有→复用）与旧监控世代失效退出（PendingTmpError 让位）之间存在交接竞态——旧监控
     退出、新监控未拉起时 pending 成孤儿，之后任何「完全退出」都不再触发替换，只能
     等下一次恰好重走 publish+拉起链。SessionStart 在 publish 之外常态检查一次：
@@ -890,87 +898,83 @@ def _revive_orphan_pending(pi):
 
 
 def run_hook():
-    """SessionStart hook 主体：返回 hook 协议 JSON dict。任何异常都转成合法输出，
-    绝不影响会话；patch_install 的人类可读输出重定向到 stderr，保证 stdout 纯 JSON。"""
+    """SessionStart hook 主体（clean 分叉）：只同步运行时文件与按配置启动后台更新检查。
+
+    绝不修改客户端文件（不自动安装、不自动补桥——一切 asar/引擎改动仅经
+    /install-overlay 显式触发）、绝不向模型上下文注入文字；任何异常都转成合法
+    JSON 输出（systemMessage 仅 UI 展示），绝不影响会话。"""
     out = {"suppressOutput": True}
-    runtime = Path(os.environ.get("ZUSAGE_PLUGIN_RUNTIME") or default_runtime())
     try:
         runtime, pi = resolve_paths()
         sync_runtime(runtime, pi.ASAR)
         try:
             from plugin_auto_update import start_auto_update
-            start_auto_update(runtime, pi)
+            start_auto_update(runtime, pi)   # clean 分叉缺省关（config plugin_auto_update:true 才启动）
         except Exception as e:
             print(f"[zusage-plugin] 后台更新启动失败（已忽略）：{e}", file=sys.stderr)
-        if optout_marker(runtime).exists():
-            return out
         st = injected_status(pi)
         if st is None:
             return out  # 本机没有可定位的桌面客户端（远程会话等），静默
-        save_runtime_config(runtime, pi)
         if st:
-            bridge = ensure_renderer_bridge(pi, quiet_monitor=True)   # 已注入也可能缺桥（客户端升级重写 asar）：幂等补一次
-            if bridge.get("status") != "pending":
-                # 本轮刚 publish 的链路已自带 launch（去重放行的旧监控靠 PendingTmpBusy
-                # 续守新世代，issue #228）：自愈只兜其余情形（含 launch 失败的下轮补拉），
-                # 不在 publish 当轮重复拉起。
-                _revive_orphan_pending(pi)
-            return _bridge_notice(out, bridge, pi)   # 待重启提醒由状态条齿轮红点承载，不再注入会话文字
-        # 未注入：自动安装始终开启，失败只保留故障提示（补丁排定/受保护目录/请重试）
-        monitor_env = {name: os.environ.get(name) for name in
-                       ("ZUSAGE_NO_MONITOR", "ZUSAGE_MONITOR_QUIET")}
-        try:
-            os.environ["ZUSAGE_NO_MONITOR"] = "1"
-            os.environ["ZUSAGE_MONITOR_QUIET"] = "1"  # 无窗口后台收尾
-            with contextlib.redirect_stdout(sys.stderr):
-                ok = _install_overlay(runtime, pi)
-        finally:
-            for name, value in monitor_env.items():
-                if value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = value
-        if ok:
-            bridge = ensure_renderer_bridge(pi, quiet_monitor=True)
-            clear_markers(runtime)
-            return _bridge_notice(out, bridge, pi)
-        from restart_notice import PREFIX
-        waiting = _pending_install_waiting(pi)
-        if waiting:
-            # issue #185：「所有窗口」常被理解成「关掉窗口即退出」，Windows 客户端
-            # 驻留托盘/后台时收尾永远等不到空档——点名关窗不等于退出与核对办法。
-            _nudge(out, PREFIX + "状态条补丁已排定：完全退出 ZCode 后"
-                     "会自动完成替换，之后重新打开即可生效，无需重试安装。"
-                     "注意关闭窗口不等于退出：若关窗后仍未替换，说明 ZCode 仍驻留托盘/后台，"
-                     "请从托盘图标退出，或在任务管理器中确认没有 ZCode 进程残留。"
-                     "不需要请运行 /uninstall-overlay，之后不再提示。")
-        elif waiting is False:
-            # 受保护目录（issue #130）：「无需重试」是假承诺，提权重跑才是
-            # 唯一解——它复用已排定的待收尾包并重建提权收尾监控，秒级完成。
-            script = PLUGIN_ROOT / "overlay_install.py"
-            if os.name == "nt":
-                action = f'以管理员身份打开终端，执行 "{PYEXE}" "{script}" install'
-            else:
-                action = f'执行 sudo env HOME="$HOME" PATH="$PATH" python3 "{script}" install'
-            _nudge(out, (PREFIX + "状态条补丁已排定，但 ZCode 安装在受保护目录，"
-                         "当前身份无法完成替换，也不会自动重建收尾进程。"
-                         f"请{action}（会复用已排定的补丁，很快），"
-                         "然后完全退出 ZCode（所有窗口）并重新打开。"
-                         "不需要请运行 /uninstall-overlay，之后不再提示。"))
-        else:
-            _nudge(out, (PREFIX + "用量状态条自动安装未完成。"
-                         "请运行 /install-overlay 重试；"
-                         "不需要请运行 /uninstall-overlay，之后不再提示。"
-                         "如果仍然失败，请查看客户端插件日志。"))
+            save_runtime_config(runtime, pi)
+            return out  # 待重启/待更新由状态条齿轮红点承载；补桥属 /install-overlay 显式链
+        print("[zusage-plugin] 状态条未注入：clean 分叉不自动安装；如需状态条请运行 "
+              "/install-overlay，不需要可忽略本行（仅 stderr 日志）。", file=sys.stderr)
         return out
     except Exception as e:  # noqa: BLE001 — hook 绝不能抛
         message = f"zusage 插件自检失败（已忽略）：{e}"
-        if optout_marker(runtime).exists():
-            print("[zusage-plugin] " + message, file=sys.stderr)
-            return {"suppressOutput": True}
-        out["systemMessage"] = message
-        out["hookSpecificOutput"] = {"hookEventName": "SessionStart", "additionalContext": message}
+        print("[zusage-plugin] " + message, file=sys.stderr)
+        out["systemMessage"] = message   # 仅 UI 展示；clean 分叉不注入 additionalContext
         return out
+
+
+def restore_engine_patch(pi):
+    """clean 分叉：卸载时还原引擎自动压缩补丁（glm/zcode.cjs）。
+
+    官方链的还原靠注入 loader 在客户端启动时按开关执行（engine-patch.cjs restore），
+    但卸载插件后 loader 不再运行，已打的补丁与 .pre-acthreshold-* 原字节备份会永久
+    残留。这里仅在「当前引擎字节确实含本插件标记」时才用最新备份整体还原，避免
+    客户端已官方升级（引擎字节已被覆盖）时把旧版本字节写回去；随后清理哨兵与备份。"""
+    if pi.ASAR is None:
+        return
+    glm = pi.ASAR.parent / "glm"
+    if not glm.is_dir():
+        return
+    engine = glm / "zcode.cjs"
+    mark = b"__zusageAutoCompactThreshold"
+    backups = sorted(glm.glob(".pre-acthreshold-*"))
+    try:
+        current = engine.read_bytes() if engine.is_file() else None
+    except OSError:
+        current = None
+    if current is not None and mark in current and backups:
+        tmp = glm / f"zcode.cjs.zusage-restore-{os.getpid()}"
+        try:
+            tmp.write_bytes(backups[-1].read_bytes())
+            os.replace(tmp, engine)
+            print("[zusage-plugin] 引擎自动压缩补丁已还原为原始字节。")
+        except OSError as e:
+            print(f"[zusage-plugin] 引擎补丁还原失败（可稍后重跑 /uninstall-overlay）：{e}",
+                  file=sys.stderr)
+            return
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+    # 已还原、或引擎本就无补丁（从未打过/官方升级已覆盖）：清理残留备份
+    if current is not None and mark not in current:
+        for backup in backups:
+            try:
+                backup.unlink()
+            except OSError:
+                pass
+    sentinel = Path(os.environ.get("ZUSAGE_PLUGIN_RUNTIME") or default_runtime()) / "engine-patch.json"
+    try:
+        sentinel.unlink()
+    except OSError:
+        pass
 
 
 def main():
@@ -1010,6 +1014,7 @@ def main():
         ok = pi.remove()
         if ok:
             remove_renderer_bridge(pi)
+        restore_engine_patch(pi)   # clean 分叉：卸载即还原全部客户端修改（含引擎补丁）
         if ok and not write_marker(optout_marker(runtime)):
             print("（豁免标记写入失败，hook 可能继续提示）")
         chown_runtime_to_user(runtime)
@@ -1018,7 +1023,7 @@ def main():
         print(f"runtime: {runtime}")
         print(f"asar:    {pi.ASAR}")
         print("injected:", {True: "是", False: "否", None: "asar 不可读"}[st])
-        print("auto install: 始终开启（未注入时 hook 自动安装；/uninstall-overlay 可豁免）")
+        print("auto install: 关闭（clean 分叉：仅 /install-overlay 显式安装）")
         print(f"optout: {optout_marker(runtime).exists()}  nudge: {nudge_marker(runtime).exists()}")
         with contextlib.redirect_stdout(sys.stdout):
             pi.check()

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -12,8 +13,10 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import renderer_bridge as bridge
 import patch_install as asar
+import symlink_support
 
 HOST = Path('/Applications/ZCode.app/Contents/Resources/app.asar')
 PANE_ANCHORS = {
@@ -237,6 +240,9 @@ class RendererBridgeTests(unittest.TestCase):
         with self.assertRaises(bridge.BridgeError):
             bridge.rewrite_asar(self.src, existing)
         self.assertEqual(existing.read_bytes(), b'keep')
+        if not symlink_support.can_create_symlinks():
+            # Windows 无 SeCreateSymbolicLinkPrivilege 时跳过悬空链接分支（WinError 1314）
+            self.skipTest('os.symlink requires SeCreateSymbolicLinkPrivilege on Windows')
         link = self.root / 'dangling.asar'
         link.symlink_to(self.root / 'new-target.asar')
         with self.assertRaises(bridge.BridgeError):
@@ -531,11 +537,13 @@ class EnsureDeployedTests(unittest.TestCase):
 
     def test_patch_present_remove_absent_lifecycle(self):
         # 就地替换不得把安装目录 asar 的权限降成 mkstemp 的 0600
+        # （mode 断言是 POSIX 语义；Windows 的 chmod 只映射只读位，跳过该断言）
         self.target.chmod(0o644)
         result = bridge.ensure_deployed(self.target)
         self.assertEqual(result["status"], "patched")
         self.assertEqual(result["version"], bridge.HOST_VERSION)
-        self.assertEqual(stat.S_IMODE(self.target.stat().st_mode), 0o644)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(self.target.stat().st_mode), 0o644)
         self.assertIn(".zusage.lock".replace(".zusage", "zusage"), str(list(self.root.iterdir()) or ""))  # 锁文件随 asar 命名
         with self.target.open('rb') as stream:
             header, base = asar.read_header(stream)
@@ -545,7 +553,8 @@ class EnsureDeployedTests(unittest.TestCase):
         self.assertEqual(bridge.ensure_deployed(self.target)["status"], "present")
         # 卸载对称清理 → removed → 还原为干净模块 → absent
         self.assertEqual(bridge.remove_deployed(self.target)["status"], "removed")
-        self.assertEqual(stat.S_IMODE(self.target.stat().st_mode), 0o644)
+        if os.name != "nt":
+            self.assertEqual(stat.S_IMODE(self.target.stat().st_mode), 0o644)
         with self.target.open('rb') as stream:
             header, base = asar.read_header(stream)
             data = bridge._read(stream, dict(asar.iter_files(header)), base, bridge.ASSET)
