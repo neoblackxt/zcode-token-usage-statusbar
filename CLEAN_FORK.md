@@ -109,6 +109,7 @@ overlay.js），**均未发现恶意代码**。要点：
   ```
 
 - 上游 remote：`upstream`（ByteRax）；分叉 remote：`origin`（neoblackxt）。工作分支 `clean`。
+- **本机市场注册已指向分叉**：`~/.zcode/cli/plugins/known_marketplaces.json` 中 `zusage-marketplace` 的 `source.url` 改为 `https://github.com/neoblackxt/zcode-token-usage-statusbar.git`（ref 仍为 `plugin-releases`；原值备份在同目录 `known_marketplaces.json.bak-*`）。分叉的 `plugin-releases` 分支必须与 `clean` 同步（宿主市场与插件更新器都从它拉取）：**每次升级后执行 `git push origin clean clean:plugin-releases`**（若历史重写过需 `--force`）。这样 ⚙ 面板与宿主插件管理器的"更新"永远拉分叉的 clean 代码，不会误更新到上游官方包。
 - 合并上游新版本时：`git fetch upstream && git merge v1.5.x`，冲突集中在上述改造点文件；
   合并后重跑 `node --check inject-main.cjs plugin-updater.cjs`、
   `python -m py_compile plugins/zcode-token-usage-statusbar/*.py plugins/zcode-token-usage-statusbar/hooks/*.py`、
