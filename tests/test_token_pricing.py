@@ -242,6 +242,16 @@ class RefreshTests(unittest.TestCase):
         reset_state(Path(self.tmp.name) / "pricing-cache.json")
         self.fetches = []
 
+    def test_fetch_defaults_off_in_clean_fork(self):
+        # clean 分叉契约：pricing.fetch 缺省关（上游缺省开，键缺失视为 true）。
+        # 配置缺失/损坏/键省略都不得启动联网刷新——AGENTS.md「自动联网缺省关」。
+        for cfg in (None, {}, {"pricing": {}}, {"pricing": "corrupt"}):
+            tp.configure(cfg, self.tmp.name)
+            self.assertIs(tp._CFG["fetch"], False, cfg)
+        self.stub_fetch()
+        self.assertIsNone(tp.start_refresh())   # 未显式开启：不启动线程
+        self.assertEqual(self.fetches, [])
+
     def tearDown(self):
         reset_state()
 
