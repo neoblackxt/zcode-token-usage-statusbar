@@ -213,18 +213,8 @@
      * → v328 宿主卡顿治理（specs/perf-lag-reduction.md）：流式期间插件在宿主渲染线程的工作量与会话文本量/历史轮数解耦——①turn-stats ingest 字符计数改无分配码点计数+按行缓存（原 Array.from(text).length 整串拆数组，单次 0.35→4.1ms 且跑在宿主 store 通知链内，现 0.02→0.4ms）；②spdUnpack 按 speed_history 引用 WeakMap 缓存（6000 轮单次 ~5ms，占速度卡生成 95%）；③updateLive 快路径未悬停本格不再每拍白建整张 V2 速度卡（只记 view 标失鲜，drawTip 打开瞬间 liveTipRefresh 补建，兜底 1s 保鲜；悬停仍每拍）；④非 live 会话数据帧未变时 500ms 内心跳不重复整条 render（原每 100ms 全量重建 tooltip 串+五个 enhance*）；⑤轮播主开关关闭态 65ms 帧步降为 1s（仅剩遗留 DOM 还原的整文档查询）
      * → v329 修复项目累计 tooltip 点击「查看全部模型」异常收起与同模型大小写重复：①根因=按钮未在 pointerdown/mousedown 阶段阻止默认/冒泡，且 hideTip 1.2s 保活因 mouseInBar=false 被绕过导致 left-bar 误杀 tooltip；在 pointerdown/mousedown 增加对 .zu-pj-more 的委托与阻止默认行为，hideTip/tipLeaveAt/mousemove 硬保活 1.2s 不受 mouseInBar 干扰；②zusage.py 聚合与计费统一对 model_id 大小写归一化（优先保留大写/官方名，合并同模型如 GLM-5.3 与 glm-5.3，费用累加不漏）。
      * → v330 宿主 3.18.0 loading 行结构适配：①chat-loading 行 label 类由 .zcode-loading-label 换成 .animated-gradient-text、spinner 图标位由 span.grid 换成带 data-chat-loading-icon 属性的 span（.font-mono 耗时格未变），轮播挂载/还原选择器双兼容（chatLoadingLabelOf/chatLoadingPixelGridOf，旧结构优先），label 未命中时不再隐藏宿主耗时格（宿主再改结构时退化为保留原生计时）；②「我方最后写入」基准由模块级单例改挂 label 自身 data-zu-last-text 属性，修多个 loading 行并存（多分栏并发请求）时后处理行的宿主文案快照被词组污染；③「拉取模型」选中套餐源而列表暂不含它（套餐 token 的解密密钥异步到位）时重问一次、仍没有则提示凭据暂不可用，不再落到「只有一个供应商就用它」而改投别的供应商；⚙ 额度披露文案补充钥匙串密钥的读取。
-     * → v331 项目累计 Tooltip 双范围统计（specs/all-projects-usage.md）：zusage 新增 _all_projects_usage 全库聚合（归属单元=会话、parent 链取根环守卫、项目键=(project_id,归一化目录) 承 issue #248、未归属单列桶、totals==Σ projects 对账；桌面快照链顶层 all_projects，serve/桌面 json 带、CLI/MCP/远端子查询不带；_PROJ_CACHE 水位缓存，实测 2.6GB 库 ~210ms/次）；渲染端头部右上「当前项目/全部项目」双 Tab 替代范围胶囊（低对比选中对齐 v282，pointerdown 同步重编+click 幂等吞掉，归属键变化重置），输入格新增「含缓存」副行（cache_read 原值、同「含思考」层级、两模式同规则），全部项目模式新增四列项目明细表（模型明细之前、默认前 5、projTipProjExpanded 独立展开、未归属显本地化文案、名称转义+title 目录、截断 500 提示、空态不渲染表头），缺帧显「全部项目统计暂不可用」不借当前项目冒充。
-     * → v332 工作流支持（specs/workflow-support.md）：zusage 把 sess_dwf-*（宿主动态工作流子代理，query_source='workflow_child'）归入子代理类——sub.list/明细/费用/速率聚合四处 query_source 门扩展、is_sub+sub_kind 字段、任务名从 dwf_actor.name 反查、快照池分桶防挤占主会话 top-6、_sub_item 下发 tps_out/tps_gen 速率分量；渲染端在会话流工作流卡（workflow-card data-workflow-run-id）注入 .zu-wfrun 汇总 chip（token 合计 + Σout÷Σgen 完成态聚合速率 + DOM 实时运行状态，悬停出逐执行者 tooltip，复用 subTip 浮层与委托监听），⚙ 新增「工作流卡汇总」开关；08 分片顺手去除 v176 以来整段重复定义的子代理 chip 块（两份 138 行逐字节相同，行为不变）。
-     * → v333 智能体后台运行的状态同步（specs/agent-background-support.md）：后台智能体（AgentProfile 后台子代理）会话身份与前台子代理同构（sess_subagent_* / query_source='subagent'），DB 统计链天然覆盖零改动；修复实时面缺口——①运行中子代理集合在消费侧并入桥快照 backgroundWorks（kind='subagent' status='running'，事件驱动 state 键、窗口无关）补给，后台智能体把启动行滚出父会话 60 行窗口后槽位估算与「子代理运行中 ×N」计数不再丢失；②宿主状态面板 Agents 分区行（v4-running-subagent-item + data-child-session-id）注入 .zu-substat 速率 chip（槽位估算→「估 X t/s」、tps_avg 回填、无数据显「运行中」，tooltip 复用 subRowTipHTML 与 subTip 委托），render 尾部 + heavy 双对账点，共用 subRate 开关。
-     * → v334 审查修复批（review-fix-merge 四路并行审查）：①zusage latest 候选与 CLI current 排除工作流 actor 会话（run 进行中多个 actor 轮流活跃会把顶层 session/current 顶成 run 视角，此前分桶注释声称已防而 latest/current 实未防）；②renderSubAgentRows 关门收浮层条件收窄到 .zu-subrate——原宽条件在 subRate 关 + wfChip 开时把悬停中的 .zu-wfrun/.zu-substat tooltip 每拍杀掉（闪烁）；③dispose 摘净链与 00 启动自清列表补 .zu-wfrun/.zu-substat（pane 回收后 chip 冻结 + 死实例 tooltip）；④renderWorkflowCards 不满足渲染条件的卡摘旧 chip（run 失败后「运行中」残留）+ tooltip 数据包每拍重写（requests/actor 名不进 sig 的打开瞬间新鲜度）+ 状态行去内层 ttEsc 防双重转义；⑤subRunningList 加快照 sessionId 校验（切会话一拍内不并入上一会话后台清单）；⑥substat「运行中」兜底态独立 run tooltip 口径 + chip 回位守卫 + 用例钉住 3s 新鲜度门与工作流卡防漂移负向夹具；⑦zusage _TASK_CACHE 失效键补 dwf_actor 维度（动态新建 actor 名字有界丢失）；⑧specs 与文档漂移同步（chip 面无状态点、开关持久化形态、CLI stdout 增量字段措辞、补给槽位优先级取舍）。
-     * → v335 第二轮复审修复：①zusage 池分桶回归修复——v334 改 latest 候选时把 normal 桶误改 ranked[:6]（含普通子代理），恢复 normal=主会话独占、子代理/dwf 同入子代理桶（防挤占主会话 top-6 的 v332 语义）；②_TASK_CACHE 失效键改 greatest(time_created,time_updated) 覆盖纯改名；③renderWorkflowCards 的 runIds 收集循环对被宿主剥掉 runId 的卡也摘残留（空 runIds 早退前执行，wfChipStale 定义上移至循环前）；④测试设防：关门收窄行为锁（宽条件即红）、dispose/00 启动表三类 chip 源码契约、_TASK_CACHE astamp 失效用例、正常子代理不占 normal 桶用例；⑤spec §6.1 残留「运行中状态点」措辞清理。
-     * → v337 后台智能体的主格速度关联（specs/agent-background-support.md §3）：后台槽位经 backgroundWorks 补给在跑而主会话自身无实时轮（空闲/上一轮已完成）时，updateLive 合成 runningTool=Agent 态让速度格走既有子代理分支（「子代理运行中 · 估 X t/s」×N；槽位绑定中/思考期降级状态词），后台全部结束（槽位解绑）自动回落会话均——主格不再静态；主会话自己的轮在跑时优先原 stats（v87 合成分支先行）。
-     * → v338 项目累计卡体验批（用户规格四连；v331 迭代）：①分区名并入首列表头（项目明细/模型明细=各自首列 th，独立标题行删除；工具调用·重试与截断注记降级为 .zu-pj-mnote 右对齐 note 行、仅有值时渲染，「按用量排序」占位删除——v331/v332 批已落基线，此处汇总声明）；②高度自下而上——切 Tab/展开明细的高度变化底边固定（projTipPrevBottom 基线 + projTipPositionGrowUp 反推 top，max-height 钳制保证 top≥8；首次弹出无基线回退原锚定，仅项目卡路径）；③表体视口帽——项目卡 .tbody 破共享 60vh 帽，覆写 max-height:calc(100vh-36px)=视口帽扣根纵向可达 chrome（上边框1+上内距10+下边框1），内容不超窗完整展示无内滚、超窗转表体内滚（其它统计卡维持 60vh）；④全部项目模式行四第一列=项目数量格（KPI folder 图标，计数=projects_total 截断前真实数或列表长度；费用可见三格 .zu-turn-kpis--trio 3 列网格、费用关退 --duo 两格）。
-     * → v339 详情卡点击空白/Esc 关闭（issue #297）：document mousedown 捕获外点判定（tipOutsideDown）——target 落在自绘浮层本体/条面/设置面板/各弹框之外即收，主 tip cause="outside" 进 hideTip 硬保活窗白名单（v271/v329 的 1.2s 窗不再吞「点过 Tab 后点空白」；devKeepTip 常驻模式契约不变仍只认 Escape/齿轮/再点同格），额度/速率/重置卡/子代理行内/git chip tooltip 与费用说明/档位说明浮层一并收（柱体 Portal pointer-events:none 无需排除）；document keydown 冒泡全局 Escape 兜底（tipGlobalEsc）——焦点在 body 时既有元素级 Esc 链收不到，此处一次收一个且不 preventDefault/stopPropagation 不吞宿主语义，冒泡挂载保住 tip 内「先收档位说明不关卡」分层。
-     * → v340 心跳不再深拷贝整窗快照（issue #309，长会话卡顿；规格 specs/perf-lag-reduction.md 规则 10–12）：桥 v2 的 getState() 每次都是整窗深拷贝（本机 374 行 ≈1ms，报告者 6868 行 ≈86ms），而 100ms 心跳里 bridgeTick 健康检查与 updateLive→subRunningList 每拍各读一次（无 stats 时「思考中」合成再读一次）、每次 store 通知还有 subscribeStore 与 overlay 回调各读一次，v2 桥下 ≥20 次整窗拷贝/秒。三处修复且与桥代际无关（v2/v3 均有效）：①心跳经 handleSnapshot 读 handle 上的快照记录（通知回调写入，超 SNAP_FRESH_MS=2s 才回源一次并兼作 store 关闭/换代探活，时钟回拨按陈旧）；②turn-stats.js subscribeStore 把本次已读 state 传给 changed(state)，回调不再二读；③通知处理按实测成本自适应合并（上次处理 ≥8ms 时间隔 min(1s, cost×9)，占比 ≤~10%，尾部定时器归订阅持有、退订即清；廉价会话逐字不变）。pane 切会话仍由 handle.sid/sideKey 即时重绑；不改桥模板与 BRIDGE_GEN（冷路径）。
-     * → v341 issue #309 复审补修：子代理槽位通知回调复用 changed(state) 不再二读；通知处理同步分支作废迟到的尾部定时器；全局 setTimeout/clearTimeout 缺席时不抛进宿主通知链（退回同步处理）；订正「窗口恒 60 行」旧注释（reducer 增量不截）。
      */
-    var VERSION = "v341";
+    var VERSION = "v330";
     /* issue #55：这三个 var 必须先于下方 buildPanel() 的调用完成赋值——var 只提升声明不提升
      * 赋值，而 buildPanel → syncUpdate 首轮执行就会读它们（赋值语句曾排在调用点之后，
      * v1.5.2 首轮读到 undefined 抛 TypeError 拖垮实例创建）。配套函数是声明有提升，留在原位。 */
@@ -337,12 +327,6 @@
       /* v176 子代理行内速率 chip：挂宿主 v4 Agent 行 .tool-summary-content 之后，颜色走
        * TPS 十档类（与条面同源），数字 tabular 不抖宽；cursor:help 提示可悬停看口径。 */
       ".zu-subrate{flex:0 0 auto;white-space:nowrap;cursor:help;font-size:12px;line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums}" +
-      /* v332 工作流 run 卡 chip：挂宿主动态工作流卡 workflow-card-status 之后（specs/workflow-support.md），
-       * 外观同 subrate 一族（tabular 不抖宽、cursor:help）；颜色走 TPS 十档类与条面同源。 */
-      ".zu-wfrun{flex:0 0 auto;white-space:nowrap;cursor:help;font-size:12px;line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums;margin-left:8px}" +
-      /* v333 状态面板 Agents 行速率 chip（specs/agent-background-support.md）：append 到宿主行末，
-       * margin-left:auto 靠右不挤宿主 elapsed 计时；其余同 subrate 一族。 */
-      ".zu-substat{flex:0 0 auto;white-space:nowrap;cursor:help;font-size:12px;line-height:1.4;font-weight:600;font-variant-numeric:tabular-nums;margin-left:auto;padding-left:10px}" +
       /* v159 状态词流光（用户规格）：复刻宿主 .zcode-loading-label 同款参数——subtle→foreground→subtle
        * 横向渐变 background-clip:text 扫光 1.4s；类名/关键帧自有命名，不依赖宿主全局类防其改版。
        * reduced-motion 停动画（与宿主一致，渐变停在可见段）。 */
@@ -933,6 +917,8 @@
       ".zu-project-tip{font-family:var(--font-sans,system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif);font-size:calc(var(--ui-font-size,14px) + 1px);line-height:1.5;color:var(--color-tooltip-foreground,#fafafa)}" +
       ".zu-pj-head{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:8px}" +
       ".zu-pj-title{font-size:calc(var(--ui-font-size,14px) + 4px);font-weight:700;letter-spacing:.5px}" +
+      ".zu-pj-range{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-size:calc(var(--ui-font-size,14px) - 2px);color:var(--color-tooltip-foreground,#fafafa);opacity:.72;border:1px solid var(--color-popover-border,rgba(255,255,255,.16));border-radius:999px;padding:2px 10px}" +
+      ".zu-pj-scope{color:inherit}" +
       ".zu-pj-sub{color:var(--color-tooltip-tag-foreground,#a6a6a6)}" +
       ".zu-pj-sub::before{content:'· ';opacity:.6}" +
       ".zu-pj-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:0 9px;background:rgba(255,255,255,.045);border-radius:8px;padding:7px 9px}" +
@@ -966,23 +952,6 @@
       ".zu-pj-table td:first-child{text-align:left;font-family:var(--font-sans,system-ui,-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif);padding-left:2px;max-width:300px;overflow:hidden;text-overflow:ellipsis}" +
       ".zu-pj-more{display:block;margin:10px auto 0;background:none;border:0;color:var(--color-brand,#a3cfff);font:inherit;font-size:var(--ui-font-size,14px);cursor:pointer;padding:4px 12px;border-radius:8px}" +
       ".zu-pj-more:hover{text-decoration:underline}" +
-      /* v331：note-only 表头行（分区名并入首列 th 后，工具/截断注记单独靠右） */
-      ".zu-pj-mnote{margin-left:auto}" +
-      /* v331 双范围 Tab（当前项目/全部项目）：对齐 v282 速度 Tab 低对比选中（去高饱和
-       * 色块），字重恒 600 防选中加宽跳动；卡片头部空间紧，padding 比速度 Tab 收一档 */
-      ".zu-pj-tabs{display:inline-flex;flex:0 0 auto;gap:2px;padding:2px;border-radius:8px;background:rgba(255,255,255,.045);border:1px solid var(--color-popover-border,rgba(255,255,255,.1))}" +
-      ".zu-light .zu-pj-tabs{background:rgba(0,0,0,.04)}" +
-      ".zu-pj-tab{appearance:none;border:0;background:transparent;color:var(--color-tooltip-tag-foreground,#a6a6a6);font-family:inherit;font-size:calc(var(--ui-font-size,14px) - 2px);line-height:1.4;font-weight:600;padding:3px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}" +
-      ".zu-pj-tab:hover{color:var(--color-foreground,#e9edf4);background:rgba(255,255,255,.06)}" +
-      ".zu-light .zu-pj-tab:hover{background:rgba(0,0,0,.05)}" +
-      ".zu-pj-tab.on{background:rgba(255,255,255,.07);color:var(--color-foreground,#e9edf4);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)}" +
-      ".zu-light .zu-pj-tab.on{background:rgba(0,0,0,.06);color:var(--color-foreground,#1c212b);box-shadow:inset 0 0 0 1px rgba(15,23,42,.08)}" +
-      ".zu-pj-tab.on:hover{background:rgba(255,255,255,.09)}" +
-      ".zu-light .zu-pj-tab.on:hover{background:rgba(0,0,0,.07)}" +
-      ".zu-pj-tab:focus-visible{outline:2px solid var(--color-brand,#a3cfff);outline-offset:1px}" +
-      /* v331：全部项目模式下项目明细与模型明细之间的分隔线 */
-      ".zu-pj-div{border-top:1px solid var(--color-popover-border,rgba(255,255,255,.12));margin-top:10px}" +
-      ".zu-light .zu-pj-div{border-top-color:rgba(0,0,0,.12)}" +
       ".zu-pj-time{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:7px;padding-top:6px;border-top:1px solid var(--color-popover-border,rgba(255,255,255,.12));font-size:calc(var(--ui-font-size,14px) - 2px);color:var(--color-tooltip-tag-foreground,#a6a6a6)}" +
       ".zu-light .zu-pj-time{border-top-color:rgba(0,0,0,.12)}" +
       ".zu-pj-time b{font-weight:500}" +
@@ -1698,20 +1667,19 @@
       settingRow('<input type="checkbox" data-k="today">', L("今日合计", "Today's total"), L("今天所有会话的消耗", "Usage across all sessions today")) +
       settingRow('<input type="checkbox" data-k="sub">', L("子代理", "Sub-agents"), L("悬停或点击状态条上的子代理查看统计", "Hover or click the bar item for sub-agent stats")) +
       settingRow('<input type="checkbox" data-k="subRate">', L("子代理行内速率", "Sub-agent row rate"), L("在会话流的 Agent 工具行内实时显示各子代理 tok/s（运行期估算，完成后切换为真实平均速率；悬停看明细）。默认开启。", "Shows each sub-agent's live tok/s inside its Agent tool row (running estimate, actual average after completion; hover for details). On by default.")) +
-      settingRow('<input type="checkbox" data-k="wfChip">', L("工作流卡汇总", "Workflow card summary"), L("在会话流的工作流卡片上显示 token 合计与聚合速率（完成态，每次执行结算后更新；悬停看各执行者明细）。默认开启。", "Shows token total and aggregate rate on workflow cards in the conversation (settled data, refreshed as each ask completes; hover for per-actor details). On by default.")) +
       settingRow('<input type="checkbox" data-k="git">', L("Git 状态", "Git status"), L("工具行显示当前分支、↑领先 ↓落后与未提交改动（+插入行 -删除行 ?未跟踪）；优先挂在「电脑操作」右侧，缺失时留在左侧操作区末尾；仅本地仓库", "Branch, ↑ahead ↓behind and uncommitted changes (+ins -del ?untracked) in the toolbar; beside Computer Use, or at the end of the left action group when unavailable; local repositories only")) +
       '</div></section>' +
       '<section class="zu-settings-section" data-sec="general"' + secOpen("general") + '><div class="cap">' + L("通用", "General") + '</div><div class="zu-settings-card">' +
       settingRow('<input type="text" class="zu-ctxov" inputmode="numeric" aria-label="' + L("上下文窗口", "Context window") + '" placeholder="' + L("自动（按模型）", "Auto (model)") + '">', L("上下文窗口", "Context window"), L("留空自动识别，优先使用客户端数值；手动值以 token 为单位，按整数读取", "Leave empty for automatic detection, preferring the client value; manual values are read as integer tokens")) +
       settingRow('<input type="checkbox" class="zu-ctx-enh">', L("上下文按钮增强", "Context button enhancement"), L("在输入框上下文按钮上显示环形用量填充、档位颜色与百分比；关闭即还原原生形态（重置卡徽标不受影响）。默认开启。", "Adds a ring fill, tier color and percentage to the context button; off restores the native look (reset card badge is unaffected). On by default.")) +
       settingRow('<input type="checkbox" class="zu-cpt-btn">', L("压缩上下文按钮", "Compact context button"), L("在「上下文容量」弹层内显示「压缩上下文」按钮（点击后需二次确认，把会话历史总结压缩以释放上下文窗口）。关闭即不再显示；自动压缩阈值行不受影响，位置上移补位。默认开启。", "Shows the Compact context button inside the context-usage popup (with a confirmation step that summarizes the conversation to free context window space). Off hides it; the auto-compact threshold row is unaffected and moves up into the button's place. On by default.")) +
-      settingRow('<input type="checkbox" class="zu-cost-enable">', L("预估费用", "Estimated cost"), L("悬停本轮/会话累计/项目累计/今日合计时显示按 models.dev 官方模型价格估算的费用（USD×汇率折 ¥；无汇率时显示 $ 原值；模型匹配不到价格按默认均价估算）。启动后每 12 小时静默同步一次价表与汇率，只下载不上传，可在配置文件关闭。默认开启。", "Shows estimated cost when hovering the stat cells, priced at official models.dev rates (USD × exchange rate as ¥; falls back to $ without a rate; unmatched models use a default average). The price table and FX rate sync silently every 12h after startup — download only, nothing uploaded; can be disabled in the config file. On by default.")) +
-      settingRow('<input type="checkbox" class="zu-tip-click">', L("点击激活悬浮窗口", "Click to open popups"), L("开启后状态条统计卡与子代理面板改为点击才打开（再点同一格、按 Escape、点击空白处或移出条面收起）；关闭时悬停立即显示。键盘 Tab 聚焦两种模式下都即时打开。默认关闭。", "On: bar stat cards and the sub-agent panel open on click only (click the same cell again, press Escape, click blank space or move off the bar to close); off: they show immediately on hover. Keyboard Tab focus opens immediately in both modes. Off by default.")) +
+      settingRow('<input type="checkbox" class="zu-cost-enable">', L("预估费用", "Estimated cost"), L("悬停本轮/会话累计/项目累计/今日合计时显示按 models.dev 官方模型价格估算的费用（USD×汇率折 ¥；无汇率时显示 $ 原值；模型匹配不到价格按默认均价估算）。clean 分叉联网同步缺省关：离线用内置价表，config pricing.fetch:true 才开启每 12 小时静默同步（只下载不上传）。费用显示本身默认开启。", "Shows estimated cost when hovering the stat cells, priced at official models.dev rates (USD × exchange rate as ¥; falls back to $ without a rate; unmatched models use a default average). In the clean fork the network sync is off by default: it uses the built-in price table offline; set pricing.fetch:true in the config to enable the silent 12h sync (download only, nothing uploaded). The cost display itself is on by default.")) +
+      settingRow('<input type="checkbox" class="zu-tip-click">', L("点击激活悬浮窗口", "Click to open popups"), L("开启后状态条统计卡与子代理面板改为点击才打开（再点同一格、按 Escape 或移出条面收起）；关闭时悬停立即显示。键盘 Tab 聚焦两种模式下都即时打开。默认关闭。", "On: bar stat cards and the sub-agent panel open on click only (click the same cell again, press Escape or move off the bar to close); off: they show immediately on hover. Keyboard Tab focus opens immediately in both modes. Off by default.")) +
       /* v297.3：开发者调试开关——tooltip 常驻（移出条面/窗口不自动关闭，Escape 仍可关） */
       settingRow('<input type="checkbox" class="zu-dev-keep-tip">', L("开发者：悬浮窗常驻", "Developer: keep tooltip visible"), L("开启后悬浮窗移出条面/移出窗口都不会自动关闭，用于截图与布局调试定位；按 Escape 或点击「关闭设置」等既有入口仍可关闭。仅调试用途，常开会影响日常使用。默认关闭。", "On: the tooltip stays open when the pointer leaves the bar or the window, for screenshot and layout debugging; Escape and the usual close paths still work. Debugging aid only — leaving it on gets in the way of daily use. Off by default.")) +
       /* v179 自动压缩阈值注入 → v188 按验收反馈简化：只留百分比（留空=跟随引擎默认），
-         开关默认开（主进程 auto_compact_patch 缺省开）；标题带「上下文」限定。 */
-      settingRow('<input type="checkbox" class="zu-ac-enable">', L("自动压缩上下文阈值注入", "Auto-compact context threshold injection"), L("给客户端引擎打补丁，把「到达阈值自动压缩上下文」的触发点改为可配置（引擎内置约在窗口 83% 处）。默认开启；补丁按引擎版本白名单注入，不支持的版本自动跳过并提示，关闭开关即还原引擎。开关对新会话生效；下方数值改完即生效（留空=跟随引擎默认）。只影响桌面客户端内置引擎，终端 CLI 不受影响。", "Patches the client engine so the auto-compact trigger point becomes configurable (the built-in engine fires around 83% of the window). On by default; patching is allow-listed per engine build, unsupported builds are skipped with a notice, and turning the switch off restores the engine. New sessions pick up the patch; the value below applies immediately (leave empty to follow the engine default). Only the desktop client's built-in engine is affected; the terminal CLI is not.")) +
+         clean 分叉：开关缺省关（主进程 auto_compact_patch === true 才打）；标题带「上下文」限定。 */
+      settingRow('<input type="checkbox" class="zu-ac-enable">', L("自动压缩上下文阈值注入", "Auto-compact context threshold injection"), L("给客户端引擎打补丁，把「到达阈值自动压缩上下文」的触发点改为可配置（引擎内置约在窗口 83% 处）。clean 分叉默认关闭：勾选本开关或 config auto_compact_patch:true 才打补丁；补丁按引擎版本白名单注入，不支持的版本自动跳过并提示，关闭开关即还原引擎。开关对新会话生效；下方数值改完即生效（留空=跟随引擎默认）。只影响桌面客户端内置引擎，终端 CLI 不受影响。", "Patches the client engine so the auto-compact trigger point becomes configurable (the built-in engine fires around 83% of the window). Off by default in the clean fork: enable via this switch or config auto_compact_patch:true; patching is allow-listed per engine build, unsupported builds are skipped with a notice, and turning the switch off restores the engine. New sessions pick up the patch; the value below applies immediately (leave empty to follow the engine default). Only the desktop client's built-in engine is affected; the terminal CLI is not.")) +
       settingRow('<input type="text" class="zu-ac-value" inputmode="numeric" aria-label="' + L("压缩上下文阈值数值", "Context compaction threshold value") + '" placeholder="' + L("留空=跟随引擎默认", "Empty = engine default") + '">', L("压缩上下文阈值数值（%）", "Context compaction threshold value (%)"), L("压缩触发点占总窗口的百分比，取 30-99；留空=跟随引擎默认。任何形式都会被钳到不早于有效窗口的 1%，避免连环压缩。", "Compaction trigger as a percentage of the full context window, 30-99; leave empty to follow the engine default. Any form is clamped to no earlier than 1% of the effective window to prevent compaction loops.")) +
       '<div class="zu-ac-status" role="status"></div>' +
       /* 万/亿开关只在中文界面出现（英文始终 K/M/B，见 fmt），因此文案不走 L() */
@@ -1967,61 +1935,9 @@
         lastMoreDownAt = 0;
         if (swallow) return true;
       }
-      if (btn.getAttribute("data-kind") === "proj") {
-        /* v331：项目明细展开态独立于模型明细；apply* 守卫通过才落状态（review MINOR：
-         * 先翻后守卫会在帧间丢 all_projects/归属键已换时空翻，下帧整卡重建自己展开） */
-        projTipApplyProjects(btn, !projTipProjExpanded);
-      } else {
-        projTipApplyModels(btn, !projTipExpanded);
-      }
+      projTipExpanded = !projTipExpanded;
+      projTipApplyModels(btn);
       return true;
-    }
-    /* v331 项目卡双范围 Tab（当前项目/全部项目）：与 speedTabActivate 同款时序——
-     * pointerdown 同步切换（v276 纪律：被遮挡窗口 rAF 冻结，重编必须同步落地），
-     * 其后的 click 一次性吞掉（键盘 Enter 只发 click 走原路径）。 */
-    var lastScopeDownAt = 0, lastScopeTab = null;
-    function projTipTabActivate(e) {
-      var tab = e.target && e.target.closest && e.target.closest(".zu-pj-tab");
-      if (!tab) return false;
-      e.stopPropagation();
-      if (e.preventDefault) e.preventDefault();
-      if (e.type === "pointerdown" && e.button) return true;   // 右/中键不切换
-      if (e.type === "pointerdown") {
-        lastScopeDownAt = Date.now();
-        lastScopeTab = tab;
-      } else if (lastScopeDownAt) {
-        /* pointerdown 已切换：其后同键 click 一次性吞掉；不同键（如键盘 Enter 切另一
-         * Tab）不吞——review MINOR：无条件 3s 窗会吃掉无 pointerdown 的键盘首击 */
-        var swallow = Date.now() - lastScopeDownAt < 3000 && tab === lastScopeTab;
-        lastScopeDownAt = 0;
-        lastScopeTab = null;
-        if (swallow) return true;
-      }
-      var scope = tab.getAttribute("data-scope") === "all" ? "all" : "cur";
-      if (scope !== projTipScope) {
-        var hadFocus = typeof document !== "undefined" && document.activeElement === tab;
-        projTipScope = scope;
-        projTipProjExpanded = false;   // 切范围重置项目明细展开（模型明细展开态保留）
-        projTipRebuildNow();
-        if (hadFocus) {   // 键盘 Enter 切换：重编销毁了被按按钮，焦点归还新选中 Tab（review MINOR）
-          var on = tip.querySelector(".zu-pj-tab.on");
-          if (on && on.focus) on.focus();
-        }
-      }
-      return true;
-    }
-    /* v331：Tab 切换同步整卡重编（数据源=projTipPj 快照；下一帧 render 以新帧覆盖）。
-     * 与 speedRebuildNow 同构：改 __tip 后 drawTip 走 tipSig 幂等路径。宿主解析：
-     * 生产路径 tooltip 必经 showTipFor 打开（tipFor=条目格、__tip 在格上）；tipFor
-     * 缺席时回退 tip 容器（drawTip 对二者都消费 __tip，焦点打开前/替身环境兜底）。 */
-    function projTipRebuildNow() {
-      var host = (tipFor && tipFor.__tip !== undefined) ? tipFor : tip;
-      if (host && projTipPj) {
-        var prevBottom = (typeof projTipPrevBottom === "function") ? projTipPrevBottom() : 0;
-        host.__tip = "\x01" + buildProjectTipHTML(projTipPj, projTipKey);
-        drawTip(host, true);
-        if (typeof projTipPositionGrowUp === "function") projTipPositionGrowUp(host, prevBottom);
-      }
     }
     /* v276：整卡重编同步执行——v275 曾用 rAF 合并「重建风暴」，但被遮挡窗口的
      * 渲染帧暂停会让 rAF 永不执行（本机 ZCode 常被 Chrome/飞书遮挡），切 Tab 后
@@ -2073,23 +1989,20 @@
       cancelTipGrace();
       lastTipDownAt = Date.now();
       speedInteractAt = Date.now();
-      if (projTipTabActivate(e)) return;
       if (projTipMoreActivate(e)) return;
       speedTabActivate(e);
     });
     tip.addEventListener("mousedown", function (e) {
-      /* v329：防止 tip 内交互元素在 mousedown 冒泡至宿主导致编辑器失焦或关闭卡片；
-       * v331：双范围 Tab 同入名单 */
+      /* v329：防止 tip 内交互元素在 mousedown 冒泡至宿主导致编辑器失焦或关闭卡片 */
       var t = e.target;
       if (!t || !t.closest) return;
-      var interactive = t.closest(".zu-pj-more") || t.closest(".zu-pj-tab") || t.closest(".zu-sv-tab");
+      var interactive = t.closest(".zu-pj-more") || t.closest(".zu-sv-tab");
       if (interactive) {
         e.stopPropagation();
         if (e.preventDefault) e.preventDefault();
       }
     });
     tip.addEventListener("click", function (e) {
-      if (projTipTabActivate(e)) return;
       if (projTipMoreActivate(e)) return;
       /* v254 速度 Tooltip 双 Tab：事件委托挂 tip 本体，改实例闭包选择后经
        * speedTipRebuild 整卡重编（签名幂等），旧 hover 卡随筛选切换自动收起。
