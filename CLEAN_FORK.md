@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.9**（tag `v1.5.9`，commit `3dba150`），分支 `clean`。清单版本号保持 `1.5.9`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.10**（tag `v1.5.10`，commit `ba4f6af`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.10`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -9,9 +9,9 @@
 本目标已固化为仓库最高规范：[AGENTS.md](AGENTS.md) 首节「分叉最高原则：上下文零入侵」——
 对本仓库工作的任何人（含 AI 助手）具有约束力，与上游合并冲突时按该原则裁剪。
 
-## 一、改造清单（相对上游 v1.5.9）
+## 一、改造清单（相对上游 v1.5.10）
 
-| # | 行为 | 上游 v1.5.9 | clean 分叉 | 实现位置 |
+| # | 行为 | 上游 v1.5.10 | clean 分叉 | 实现位置 |
 |---|---|---|---|---|
 | 1 | SessionStart 未注入时自动安装（改 app.asar，恒开无开关） | 无条件自动装 | **不装**，仅 stderr 日志提示 `/install-overlay` | `overlay_install.py` `run_hook()` |
 | 2 | SessionStart 已注入时自动补渲染桥（改 asar 内 renderer 资产） | 每次会话自动补 | **不动**，补桥仅经显式安装命令 | 同上 |
@@ -21,6 +21,7 @@
 | 6 | 后台自动更新（SessionStart 拉起分离进程 + 客户端 loader 每 60s 轮询，每小时限频，自动安装新 Release） | 缺省开（键缺省视为 true） | **缺省关**（Python 侧与 Node 侧两处默认值都翻转），config `plugin_auto_update: true` 显式开启 | `plugin_auto_update.py`、`plugin-updater.cjs` |
 | 7 | 自动压缩阈值引擎补丁（改 `<resources>/glm/zcode.cjs`，v1.5.9 新增） | 缺省开（`auto_compact_patch !== false`） | **缺省关**（`=== true`），⚙ 面板或 config 显式开启才打；同时修正了上游注释与代码不一致（上游注释写"默认关"而代码默认开） | `inject-main.cjs` |
 | 8 | 卸载还原 | 剥注入行+剥桥；**引擎补丁永久残留**（备份 `.pre-acthreshold-*` 同样残留） | 新增 `restore_engine_patch()`：当前引擎字节含本插件标记时用首打备份整体还原（防客户端已官方升级时写回旧字节），随后清理备份与哨兵 | `overlay_install.py` `remove` 链 |
+| 9 | 费用预估联网同步（v1.5.10 新增：serve 常驻进程每 12h 拉 models.dev 价表 + USD→CNY 汇率，主源 `open.er-api.com`、兜底 `api.exchangerate.fun`） | 缺省开（`pricing.fetch` 键缺省视为 true） | **缺省关**（`is not False` → `is True`）：费用显示照常（离线用内置烘焙价表，无汇率显示 $ 原值），config `pricing.fetch: true` 才开启在线刷新；⚙ 文案同步改写 | `token_pricing.py` |
 
 未改动的已披露行为（有意保留，见第三节审计）：
 
@@ -40,22 +41,26 @@
 | `auto_compact_patch` | `true` | **`false`** | 给客户端内置引擎打自动压缩阈值补丁（改 `glm/zcode.cjs`） |
 | `hot_reload` | `true` | `true` | overlay.js 热更新（本地） |
 | `quota_enabled` / `reset_badge_enabled` | `true` | `true` | 额度/重置卡查询（凭据只发各厂商官方域） |
+| `pricing.fetch` | `true` | **`false`** | 费用预估在线同步（每 12h 拉 models.dev 价表与汇率；关闭时用内置价表离线计算，无汇率显示 $） |
 
 安装/卸载状态条：`/install-overlay`、`/uninstall-overlay`（clean 分叉中前者是唯一安装入口，
 后者会还原全部客户端修改包括引擎补丁）。旧键 `plugin_auto_install_overlay` 与环境变量
 `ZUSAGE_PLUGIN_AUTO_INSTALL` 在上游 v1.5.7 起已失效，clean 分叉中无对应行为可开关。
 
-## 三、安全审计结论（v1.5.9 全量，2026-11-01）
+## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10 增量 2026-11-03）
 
 四个独立审计覆盖全部运行时代码（更新/加载器链、凭据与数据流向、安装/补丁链、渲染层载荷
-overlay.js），**均未发现恶意代码**。要点：
+overlay.js），**均未发现恶意代码**；v1.5.10 增量（token_pricing 费用链、v208 更新红点、
+客户端 3.17.2 双适配）复核结论相同。要点：
 
 - **网络出口全量枚举，无陌生主机**：GitHub/GitCode（更新渠道，含资产 CDN：
   release-assets/objects.githubusercontent.com、file-cdn.gitcode.com、api.gitcode.com）+
   各模型厂商官方端点（bigmodel/z.ai/zcode.z.ai/minimax/moonshot-kimi/deepseek/
   siliconflow/openrouter/anthropic/cline/opencode/commandcode/小米 MiMo/火山方舟，
   及 www.minimaxi.com、www.minimax.io、open.volcengineapi.com、cloud.siliconflow.cn、
-  models.dev）。无遥测/分析端点。
+  models.dev）+ **v1.5.10 新增费用同步源**（`models.dev/api.json` 牌价、
+  `open.er-api.com/v6/latest/USD` 汇率主源、`api.exchangerate.fun` 兜底；
+  全部 GET 公共数据、不带任何凭据，且 clean 分叉缺省关）。无遥测/分析端点。
 - **凭据只发各自厂商域名**：16+ 个额度适配器逐家核对，无一例外；bigmodel/z.ai 家族
   key 有官方域校验（绝不发第三方中转）；自定义 baseUrl 强制 https（例外仅 localhost）
   + 域名白名单；API Key 只落 `quota-secrets.json`（0600、原子写），不进日志/诊断/面板。
@@ -78,10 +83,10 @@ overlay.js），**均未发现恶意代码**。要点：
     凭据仅驻内存；
   - 诊断文件 `diag-N.json` 含会话 id 摘要（本地，`diag:false` 可关），显式排除凭据类键。
 
-## 四、测试状态（2026-11-02，Windows 本机）
+## 四、测试状态（2026-11-03，Windows 本机，v1.5.10 基线）
 
-- **Python 全量**：672 项全绿（含随分叉翻转的默认值断言；另修复了上游若干 Windows 平台性测试缺陷：`pwd` 导入、sqlite 句柄占用、mode 位断言、symlink 守卫）。
-- **Node 全量**：1116 项中 1022 过；**93 个失败与未改动的原版 v1.5.9 在本机的失败清单逐字一致**（92 个共有 + 1 个已修复的分叉前提用例），全部是上游测试在 Windows 的既有环境性失败，集中在 Git chip 域（readdir 顺序/文件系统语义）与 zcode-start 额度客户端域，上游 CI（macOS）为绿。分叉**零回归**。
+- **Python 全量**：714 项全绿（29 skip 为既有平台性跳过；含随分叉翻转的默认值断言与新增的 `pricing.fetch` 缺省关契约；v1.5.9 时为 672 项，+42 为上游 v1.5.10 新增用例）。另修复过上游若干 Windows 平台性测试缺陷：`pwd` 导入、sqlite 句柄占用、mode 位断言、symlink 守卫。
+- **Node 全量**：1131 项中 1036 过（+1 为分叉引擎补丁契约测试，通过）；**94 个失败与未改动的原版 v1.5.10 在本机的失败清单逐字一致**（分叉独有失败 = 原版独有失败 = 0），全部是上游测试在 Windows 的既有环境性失败，集中在 Git chip 域（readdir 顺序/文件系统语义）与 zcode-start 额度客户端域，上游 CI（macOS）为绿。分叉**零回归**。python3 修复后全套 30 秒跑完（不再挂起）。
 - **本机跑 updater 系测试的前置条件**：`python3` 必须是真实解释器。Windows 的 Microsoft Store `python3` 执行别名存根会导致跨进程锁永不就绪 → 批量失败与挂起（本次以在 miniforge env 目录复制 `python3.exe` 解决，删除该文件即回滚）。
 - 分叉侧所有与"默认值/注入语义"相关的测试已翻转为新契约，auto 流程用例一律显式 `plugin_auto_update: true` 前提（被测行为不变，只显式化原来隐式依赖的默认开）。
 
@@ -97,25 +102,32 @@ overlay.js），**均未发现恶意代码**。要点：
   ```bash
   cd <本仓库检出目录>
   git fetch upstream --tags
-  git merge v1.5.x                 # 冲突按 AGENTS.md 首节原则裁剪，不按上游
-  # 四套检查全绿后：
+  git branch clean-pre-vX.Y.Z clean        # 留本地备份 ref
+  git rebase vX.Y.Z clean                  # 冲突按 AGENTS.md 首节原则裁剪，不按上游
+  # 版本号对齐（3 份 manifest 的 version 字段与上游同号）；四套检查全绿后：
   python sync_plugin.py --check
   node --test tests/*.test.cjs --test-timeout=30000
   python -B -m unittest discover -s tests -p 'test_*.py'
+  # 发布（rebase 改写历史，推送一律 force-with-lease）：
+  git push --force-with-lease origin clean clean:plugin-releases
+  git tag -fa vX.Y.Z -m "发布说明……" clean && git push -f origin vX.Y.Z   # 触发 release CI
   # 覆盖缓存目录（保留目录名不变，管理器登记不受影响）：
   rm -rf "<缓存版本目录>"/* && cp -r plugins/zcode-token-usage-statusbar/. "<缓存版本目录>"/
   python "<缓存版本目录>/overlay_install.py" sync    # 更新运行时目录
   # 最后：更新 installed_plugins.json 里该插件的 version 字段，完全退出 ZCode 并重开
   ```
 
-- 上游 remote：`upstream`（ByteRax）；分叉 remote：`origin`（neoblackxt）。工作分支 `clean`。
-- **本机市场注册已指向分叉**：`~/.zcode/cli/plugins/known_marketplaces.json` 中 `zusage-marketplace` 的 `source.url` 改为 `https://github.com/neoblackxt/zcode-token-usage-statusbar.git`（ref 仍为 `plugin-releases`；原值备份在同目录 `known_marketplaces.json.bak-*`）。分叉的 `plugin-releases` 分支必须与 `clean` 同步（宿主市场与插件更新器都从它拉取）：**每次升级后执行 `git push origin clean clean:plugin-releases`**（若历史重写过需 `--force`）。这样 ⚙ 面板与宿主插件管理器的"更新"永远拉分叉的 clean 代码，不会误更新到上游官方包。
-- **上游引用处置记录**（2026-11-02 扫描全仓）：
+- 上游 remote：`upstream`（ByteRax）；分叉 remote：`origin`（neoblackxt）。工作分支 `clean`，**升级一律 rebase 到上游 tag**（分叉提交线性重放，无 merge 提交；rebase 后历史改写，推送必须 `--force-with-lease`）。
+- **本机市场注册已指向分叉**：`~/.zcode/cli/plugins/known_marketplaces.json` 中 `zusage-marketplace` 的 `source.url` 改为 `https://github.com/neoblackxt/zcode-token-usage-statusbar.git`（ref 仍为 `plugin-releases`；原值备份在同目录 `known_marketplaces.json.bak-*`）。分叉的 `plugin-releases` 分支必须与 `clean` 同步（宿主市场与插件更新器都从它拉取）：**每次升级后执行 `git push --force-with-lease origin clean clean:plugin-releases`**。这样 ⚙ 面板与宿主插件管理器的"更新"永远拉分叉的 clean 代码，不会误更新到上游官方包。
+- **上游引用处置记录**（2026-11-02 扫描全仓；2026-11-03 随 v1.5.10 rebase 复核，无新增需处置项——上游新引入的 GitCode 字串仅为更新来源显示/URL 解析，非安装引导）：
   - 已转分叉：README×3 的安装口令/Releases 链接/Star History（并声明 clean 分叉无 GitCode 镜像）；`overlay.js` 反馈按钮 issues URL 与"清单回退失败"提示口令（原提示会引导安装上游 GitCode 官方包——已移除该向量）；`marketplace.json` icon CDN（@clean 分支，`tests/test_plugin_contract.py` 断言同步）；`tests/overlay-settings.test.cjs` 的 ISSUES_URL 断言。
   - **有意保留上游引用**：`plugin-release.cjs` 的 `NOTES_GITCODE_MIRROR`（仅更新日志正文的只读回退源，分叉 git 渠道不触发）；`.zcode/skills/`、`docs/`、AGENTS.md、本文件中的上游链接（审计溯源与上游维护流程文档）；`installed_plugins.json` 安装记录里的 `source.url`（历史溯源，非活动指针，宿主下次从分叉市场更新时会自然重写）；测试中的 `tanranran/...` 字符串（通用链接构造器的夹具数据）。
-- 合并上游新版本时：`git fetch upstream && git merge v1.5.x`，冲突集中在上述改造点文件；
-  合并后重跑 `node --check inject-main.cjs plugin-updater.cjs`、
+- 合并上游新版本时：`git fetch upstream && git rebase v1.5.x clean`，冲突集中在上述改造点文件；
+  rebase 后重跑 `node --check inject-main.cjs plugin-updater.cjs`、
   `python -m py_compile plugins/zcode-token-usage-statusbar/*.py plugins/zcode-token-usage-statusbar/hooks/*.py`、
   `python sync_plugin.py --check`、`node --test tests/*.test.cjs`、
   `python -B -m unittest discover -s tests -p 'test_*.py'`。
+  v1.5.10 rebase 实录：冲突 5 处（两份 overlay.js 的 ⚙ 更新分区文案、两份 manifest、
+  install-overlay.md），全部按"分叉语义 + 上游新事实"合成；另翻转 `pricing.fetch` 缺省（改造表 #9）、
+  修正 ⚙ 自动压缩阈值行的"默认开启"陈旧文案（v1.5.9 起就该是"缺省关"）。
 - 测试套件中与"缺省开"相关的断言已随本分叉翻转为"缺省关"（见提交 diff 中 tests/ 部分）。
