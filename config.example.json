@@ -12,7 +12,7 @@
   "plugin_auto_update": false,
   "context_window": 1000000,
   "pricing": {
-    "fetch": true,
+    "fetch": false,
     "url": "https://models.dev/api.json",
     "fx": {
       "url": "https://open.er-api.com/v6/latest/USD"
