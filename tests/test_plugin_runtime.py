@@ -642,74 +642,32 @@ class PluginRuntimeTests(unittest.TestCase):
             result = installer.run_hook()
         return result, errors.getvalue()
 
-    def test_hook_revives_orphan_pending_when_no_monitor_watches(self):
-        # issue #228 自愈：合法 pending + 实例锁空闲 = 孤儿（publish 后旧监控让位退出、
-        # 新监控被去重跳过未拉起），SessionStart 必须补拉静默监控接管收尾。
-        patch_install = self.patch_install_stub()
-        patch_install.pending_operation.return_value = "install"
-        patch_install.monitor_instance_lock.side_effect = self.lock_stub(True)
-        patch_install.target_writable.return_value = True
-        captured = {}
-        def launch(epoch):
-            captured["quiet"] = os.environ.get("ZUSAGE_MONITOR_QUIET")
-        patch_install.launch_monitor.side_effect = launch
-        with mock.patch.object(installer, "resolve_paths", return_value=(self.runtime, patch_install)), \
-                mock.patch.object(installer, "injected_status", return_value=True), \
-                mock.patch.object(installer, "ensure_renderer_bridge", return_value={"status": "present"}), \
-                mock.patch.dict(os.environ, {"ZUSAGE_MONITOR_QUIET": ""}), \
-                contextlib.redirect_stderr(io.StringIO()):
-            result = installer.run_hook()
-            self.assertEqual(os.environ.get("ZUSAGE_MONITOR_QUIET"), "")   # 开关用完即还原
-        self.assertEqual(patch_install.launch_monitor.call_count, 1)
-        self.assertEqual(captured["quiet"], "1")   # SessionStart 静默接管，不弹监控黑窗
-        self.assertEqual(result, {"suppressOutput": True})
-
-    def test_hook_revive_skips_when_a_monitor_already_watches(self):
-        # 已有监控在值守（实例锁被持有）：不叠加进程。
-        patch_install = self.patch_install_stub()
-        patch_install.pending_operation.return_value = "install"
-        patch_install.monitor_instance_lock.side_effect = self.lock_stub(False)
-        result, _ = self.revive_fixture(patch_install)
-        patch_install.launch_monitor.assert_not_called()
-        self.assertEqual(result, {"suppressOutput": True})
-
-    def test_hook_skips_revive_on_the_fresh_publish_path(self):
-        # 本轮刚 publish（status=pending）的链路已自带 launch：自愈不在 publish 当轮
-        # 重复拉起——新监控（WMI 通道秒级）尚未持锁时会被锁空闲探测误判成孤儿。
-        patch_install = self.patch_install_stub()
-        patch_install.pending_operation.return_value = "install"
-        patch_install.monitor_instance_lock.side_effect = self.lock_stub(True)
-        patch_install.target_writable.return_value = True
-        result, _ = self.revive_fixture(patch_install, bridge_status="pending")
-        patch_install.launch_monitor.assert_not_called()
-        self.assertEqual(result, {"suppressOutput": True})
-
-    def test_hook_revive_skips_without_legal_pending_operation(self):
-        for op in (None, "cancelled"):
-            with self.subTest(operation=op):
+    def test_hook_never_revives_orphan_pending_in_clean_fork(self):
+        # clean 分叉反转（v1.5.12 上游新增 SessionStart 孤儿待收尾包自愈）：run_hook
+        # 不自动补拉收尾监控——SessionStart 只同步运行时文件；孤儿待收尾包的恢复
+        # 路径是重跑 /install-overlay（显式链自带 pending 复用与监控拉起）。
+        # 覆盖上游自愈的全部触发/跳过场景：孤儿条件（锁空闲+合法 pending+目标可写）、
+        # 已有监控值守、刚 publish、无合法 pending、目标不可写、探测抛错。
+        scenarios = [
+            ("orphan", "install", True, True, None),
+            ("watched", "install", False, True, None),
+            ("fresh-publish", "install", True, True, None),
+            ("no-pending", None, True, True, None),
+            ("cancelled", "cancelled", True, True, None),
+            ("unwritable", "install", True, False, None),
+            ("probe-error", "install", True, True, RuntimeError("probe boom")),
+        ]
+        for name, op, lock_free, writable, err in scenarios:
+            with self.subTest(scenario=name):
                 patch_install = self.patch_install_stub()
                 patch_install.pending_operation.return_value = op
-                patch_install.monitor_instance_lock.side_effect = self.lock_stub(True)
-                patch_install.target_writable.return_value = True
-                self.revive_fixture(patch_install)
+                if err is not None:
+                    patch_install.pending_operation.side_effect = err
+                patch_install.monitor_instance_lock.side_effect = self.lock_stub(lock_free)
+                patch_install.target_writable.return_value = writable
+                result, _ = self.revive_fixture(patch_install)
                 patch_install.launch_monitor.assert_not_called()
-
-    def test_hook_revive_skips_on_unwritable_target(self):
-        # issue #130：受保护目录上 hook 无提权收不了尾，补拉只会得到立即退出的监控
-        # ——该场景由提权重跑链负责，不自愈。
-        patch_install = self.patch_install_stub()
-        patch_install.pending_operation.return_value = "install"
-        patch_install.monitor_instance_lock.side_effect = self.lock_stub(True)
-        patch_install.target_writable.return_value = False
-        self.revive_fixture(patch_install)
-        patch_install.launch_monitor.assert_not_called()
-
-    def test_hook_revive_failure_never_breaks_hook_output(self):
-        patch_install = self.patch_install_stub()
-        patch_install.pending_operation.side_effect = RuntimeError("probe boom")
-        result, errors = self.revive_fixture(patch_install)
-        self.assertEqual(result, {"suppressOutput": True})
-        self.assertIn("probe boom", errors)
+                self.assertEqual(result, {"suppressOutput": True})
 
     def test_hook_optout_and_record_failure_are_preserved(self):
         # clean 分叉：optout 不再改变 hook 行为（无安装行为可豁免）；未注入同样只打

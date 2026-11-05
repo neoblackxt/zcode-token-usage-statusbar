@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.11**（tag `v1.5.11`，commit `799a59b`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.11`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.12**（tag `v1.5.12`，commit `728d1a9`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.12`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -9,9 +9,9 @@
 本目标已固化为仓库最高规范：[AGENTS.md](AGENTS.md) 首节「分叉最高原则：上下文零入侵」——
 对本仓库工作的任何人（含 AI 助手）具有约束力，与上游合并冲突时按该原则裁剪。
 
-## 一、改造清单（相对上游 v1.5.11）
+## 一、改造清单（相对上游 v1.5.12）
 
-| # | 行为 | 上游 v1.5.11 | clean 分叉 | 实现位置 |
+| # | 行为 | 上游 v1.5.12 | clean 分叉 | 实现位置 |
 |---|---|---|---|---|
 | 1 | SessionStart 未注入时自动安装（改 app.asar，恒开无开关） | 无条件自动装 | **不装**，仅 stderr 日志提示 `/install-overlay` | `overlay_install.py` `run_hook()` |
 | 2 | SessionStart 已注入时自动补渲染桥（改 asar 内 renderer 资产） | 每次会话自动补 | **不动**，补桥仅经显式安装命令 | 同上 |
@@ -23,6 +23,7 @@
 | 8 | 卸载还原 | 剥注入行+剥桥；**引擎补丁永久残留**（备份 `.pre-acthreshold-*` 同样残留） | 新增 `restore_engine_patch()`：当前引擎字节含本插件标记时用首打备份整体还原（防客户端已官方升级时写回旧字节），随后清理备份与哨兵 | `overlay_install.py` `remove` 链 |
 | 9 | 费用预估联网同步（v1.5.10 新增：serve 常驻进程每 12h 拉 models.dev 价表 + USD→CNY 汇率，主源 `open.er-api.com`、兜底 `api.exchangerate.fun`） | 缺省开（`pricing.fetch` 键缺省视为 true） | **缺省关**（`is not False` → `is True`）：费用显示照常（离线用内置烘焙价表，无汇率显示 $ 原值），config `pricing.fetch: true` 才开启在线刷新；⚙ 文案同步改写 | `token_pricing.py` |
 | 10 | macOS 待更新包预注入（v1.5.11 新增：已注入的 loader 监视 Squirrel pending 目录，发现未来版本更新 zip 即改写 zip 内 app.asar 补注入行/渲染桥，更新重启即生效，免二次重启） | 缺省开（`pending_zip_patch` 键缺省视为 true） | **缺省关**（两处门控 `=== false` → `=== true`，watcher 不注册）：仅 macOS 生效，config `pending_zip_patch: true` 显式开启；工具本身保留（`pending_zip_patch.py`，原子/幂等/fail-closed，绝不动 update-info.json） | `inject-main.cjs` |
+| 11 | SessionStart 孤儿待收尾包自愈（v1.5.12 新增：合法 pending 且监控实例锁空闲时自动补拉静默收尾监控，issue #228） | 缺省开（`run_hook` st 分支无条件调用） | **不接线**：`_revive_orphan_pending` 函数保留（附分叉注释）但 `run_hook` 不调用——孤儿待收尾包的恢复路径是重跑 `/install-overlay`（显式链自带 pending 复用与监控拉起） | `overlay_install.py` |
 
 未改动的已披露行为（有意保留，见第三节审计）：
 
@@ -53,9 +54,11 @@
 
 四个独立审计覆盖全部运行时代码（更新/加载器链、凭据与数据流向、安装/补丁链、渲染层载荷
 overlay.js），**均未发现恶意代码**；v1.5.10 增量（token_pricing 费用链、v208 更新红点、
-客户端 3.17.2 双适配）与 v1.5.11 增量（2026-11-05 复核：pending_zip_patch 预注入链、
+客户端 3.17.2 双适配）与 v1.5.11/v1.5.12 增量（2026-11-05 复核：pending_zip_patch 预注入链、
 WMI 脱离式监控拉起、quota 宿主路径解析、overlay 速度图/tooltip 批、安装器解释器与
-提权指引修复）结论相同。要点：
+提权指引修复；v1.5.12 的 SessionStart 孤儿自愈补拉、model-puller 全新环境自建规则、
+Windows 探测 CREATE_NO_WINDOW、macOS Helper bundle 拉起 CLI、Busy journal 状态机）
+结论相同。要点：
 
 - **网络出口全量枚举，无陌生主机**：GitHub/GitCode（更新渠道，含资产 CDN：
   release-assets/objects.githubusercontent.com、file-cdn.gitcode.com、api.gitcode.com）+
@@ -76,6 +79,8 @@ WMI 脱离式监控拉起、quota 宿主路径解析、overlay 速度图/tooltip
   v1.5.11 的 macOS pending zip 预注入同纪律（zip 内 asar 条目唯一匹配才动、原子替换、
   stat 锚点复核、update-info.json 绝不改动、失败保留原包），但 clean 分叉缺省关；
   WMI 拉起只用于本插件自己的收尾监控进程（父进程 WmiPrvSE、本地、`ZUSAGE_MONITOR_NO_WMI` 可禁），非逃逸手段；
+  v1.5.12 的 model-puller 自建规则只写本地 provider 配置文件（⚙「拉取模型」显式动作、
+  结构缺口 fail-closed），macOS Helper 只换本插件检查更新的 CLI 启动路径；
   渲染桥按客户端版本 SHA256 指纹表门控（表外 fail-closed 拒绝）；引擎补丁按引擎整文件
   SHA256 白名单+锚点唯一性校验（不匹配即拒绝写盘）。
 - **无持久化、无提权**：无计划任务/注册表/登录项/服务（旧 schtasks 方案已废弃删除）；
@@ -90,10 +95,10 @@ WMI 脱离式监控拉起、quota 宿主路径解析、overlay 速度图/tooltip
     凭据仅驻内存；
   - 诊断文件 `diag-N.json` 含会话 id 摘要（本地，`diag:false` 可关），显式排除凭据类键。
 
-## 四、测试状态（2026-11-05，Windows 本机，v1.5.11 基线）
+## 四、测试状态（2026-11-05，Windows 本机，v1.5.12 基线）
 
-- **Python 全量**：752 项中 751 过（29 skip 为既有平台性跳过；v1.5.10 时为 714 项全绿，+38 为上游 v1.5.11 新增用例，含随分叉翻转的 `pending_zip_patch` 缺省关契约与反转的 install-overlay 文档契约）；唯一失败 `test_windows_wmi_spawn_real_monitor_exits_cleanly`（上游新增的 WMI 实弹拉起用例）**与未改动的原版 v1.5.11 在本机同样失败**（本测试环境 WMI 创建不可等待），环境性、零回归。另修复过上游若干 Windows 平台性测试缺陷：`pwd` 导入、sqlite 句柄占用、mode 位断言、symlink 守卫。
-- **Node 全量**：1180 项中 1083 过（+1 为分叉引擎补丁契约测试，通过）；**96 个失败与未改动的原版 v1.5.11 在本机的失败清单逐字一致**（分叉独有失败 = 原版独有失败 = 0），全部是上游测试在 Windows 的既有环境性失败，集中在 Git chip 域（readdir 顺序/文件系统语义）与 zcode-start 额度客户端域，上游 CI（macOS）为绿。分叉**零回归**。
+- **Python 全量**：776 项中 775 过（29 skip 为既有平台性跳过；v1.5.10 时 714 全绿 → v1.5.11 752 → v1.5.12 776，增量均为上游新用例，含随分叉翻转的 `pending_zip_patch` 缺省关契约、反转的 install-overlay 文档契约与 v1.5.12 的「run_hook 不自愈孤儿 pending」7 场景契约）；唯一失败 `test_windows_wmi_spawn_real_monitor_exits_cleanly`（上游 v1.5.11 新增的 WMI 实弹拉起用例）**与未改动的原版 v1.5.11/v1.5.12 在本机同样失败**（本测试环境 WMI 创建不可等待），环境性、零回归。另修复过上游若干 Windows 平台性测试缺陷：`pwd` 导入、sqlite 句柄占用、mode 位断言、symlink 守卫。
+- **Node 全量**：1213 项中 1112 过（+1 为分叉引擎补丁契约测试，通过）；**100 个失败与未改动的原版 v1.5.12 在本机的失败清单逐字一致**（分叉独有失败 = 原版独有失败 = 0；v1.5.11 基线时为 96，+4 均为上游新增测试的 Windows 环境性失败），全部是上游测试在 Windows 的既有环境性失败，集中在 Git chip 域（readdir 顺序/文件系统语义）与 zcode-start 额度客户端域，上游 CI（macOS）为绿。分叉**零回归**。
 - **本机跑 updater 系测试的前置条件**：`python3` 必须是真实解释器。Windows 的 Microsoft Store `python3` 执行别名存根会导致跨进程锁永不就绪 → 批量失败与挂起（此前以在 miniforge env 目录复制 `python3.exe` 解决，删除该文件即回滚）。
 - 分叉侧所有与"默认值/注入语义"相关的测试已翻转为新契约，auto 流程用例一律显式 `plugin_auto_update: true` / `pending_zip_patch: true` 前提（被测行为不变，只显式化原来隐式依赖的默认开）。教训沉淀：**文档类改动也要跑相关契约测试**——v1.5.10 的 f672dcc 改了 install-overlay.md 却未跑 `test_restart_notice`，漏掉一处 assertIn 横幅断言，v1.5.11 全量跑才暴露（本次已反转补齐）。
 
@@ -142,4 +147,11 @@ WMI 脱离式监控拉起、quota 宿主路径解析、overlay 速度图/tooltip
   config.example.json），全部按分叉语义解决；上游对被删自动安装链的改进（关窗≠退出文案、
   PYEXE 真实解释器）中，PYEXE 因在保留代码内自动并入，文案知识由 install-overlay.md 承载；
   另翻转 `pending_zip_patch` 缺省（改造表 #10，仅 macOS 生效但原则不豁免）。
+  v1.5.12 rebase 实录（2026-11-05）：四个分叉提交撞冲突——a976d97（两 manifest+
+  overlay_install run_hook）、redirect（两份 overlay.js 的 GitCode 渠道引导行：分叉改写
+  +上游 v244 relaunchSent 新行合成）、v1.5.10 跟进（两份 overlay.js 的 ⚙ cost 行：分叉
+  文案+上游 zu-tip-click 新行合成）、v1.5.11 跟进（两 manifest 的 version 单行）；
+  其余提交零冲突。v1.5.12 新面处置：`_revive_orphan_pending` 保留不接线（改造表 #11，
+  上游 6 个自愈断言测试反转为分叉契约）；CREATE_NO_WINDOW/Helper bundle/Busy 状态机/
+  model-puller 自建规则全部采纳。
 - 测试套件中与"缺省开"相关的断言已随本分叉翻转为"缺省关"（见提交 diff 中 tests/ 部分）。
