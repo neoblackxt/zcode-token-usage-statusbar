@@ -254,9 +254,14 @@ class RestartNoticeTests(unittest.TestCase):
             self.assertNotIn("<span", context)
             self.assertNotIn(notice.MESSAGE, context)
 
-    def test_install_command_uses_the_same_bold_restart_copy(self):
+    def test_install_command_does_not_mandate_bold_restart_copy(self):
+        # clean 分叉反转（f672dcc）：命令文档不得要求把重启提醒复刻成引用块加粗公告
+        # （上游该格式会被宿主渲染成红色警示横幅——正是分叉要消灭的形态）；
+        # 重启知识以普通句子承载，常驻载体是状态条 ⚙ 齿轮红点与「插件更新」分区。
         command = (PLUGIN / "commands" / "install-overlay.md").read_text(encoding="utf-8")
-        self.assertIn("> **" + notice.MESSAGE + "**", command)
+        self.assertNotIn("> **" + notice.MESSAGE + "**", command)
+        self.assertNotIn("引用块原样加粗", command)
+        self.assertIn("不要用引用块、加粗、横幅或emoji", command)
 
     def test_no_marker_means_no_reminder(self):
         self.assertEqual(notice_context(self.runtime), "")
