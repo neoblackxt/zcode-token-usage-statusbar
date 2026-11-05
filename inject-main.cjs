@@ -964,7 +964,7 @@ function pendingZipCandidate() {
 }
 function patchPendingZip() {
   if (pendingZipBusy || shuttingDown) return;
-  if (process.platform !== "darwin" || readCfgCached().pending_zip_patch === false) return;
+  if (process.platform !== "darwin" || readCfgCached().pending_zip_patch !== true) return;   // clean 分叉：缺省关，显式 true 才预注入待更新包
   if (pendingZipFails >= 3 && Date.now() - pendingZipLastFailAt < 600000) return;   // 失败退避 10 分钟
   const zip = pendingZipCandidate();
   if (!zip) return;
@@ -989,7 +989,7 @@ function patchPendingZip() {
   });
 }
 {
-  if (process.platform === "darwin" && readCfg().pending_zip_patch !== false) {
+  if (process.platform === "darwin" && readCfg().pending_zip_patch === true) {   // clean 分叉：缺省关，显式 true 才注册 watcher
     /* 不设启动检查 timer：上会话留下的待装包由首次 60s 兜底轮询覆盖（Squirrel 取包
      * 要等用户点击，不差这几十秒），也避免与常驻泵的 15000ms 超时哨兵同值——
      * inject-main-lifecycle 测试按 ms 值区分 timer。 */

@@ -1,6 +1,8 @@
 "use strict";
 /* v228 pending 更新包预注入触发链回归：候选筛选（版本/文件名/update-info.json 一致性）、
  * 配置与平台门控、spawn 参数、失败退避、before-quit 清理。
+ * clean 分叉契约：pending_zip_patch 缺省关——期望 watcher/spawn 活跃的用例一律显式
+ * cfg pending_zip_patch:true，键省略/为 false 都不得注册 watcher（见门控用例）。
  * 切片加载 inject-main.cjs 的 v228 段；fs 走真实临时目录（home 指向沙箱根），仅
  * app-update.yml 由 stub 提供 updaterCacheDirName。 */
 const test = require("node:test");
@@ -86,7 +88,7 @@ const patchArgs = (h, spawnRecord) => ({
 });
 
 test("darwin pending zip with a newer version spawns the patcher with explicit paths", async () => {
-  const h = harness();
+  const h = harness({ cfg: { pending_zip_patch: true }, version: "3.17.2" });
   try {
     stageUpdate(h);
     fs.mkdirSync(path.join(h.root, "resources"), { recursive: true });
@@ -108,7 +110,7 @@ test("darwin pending zip with a newer version spawns the patcher with explicit p
 });
 
 test("candidate gating: running version, stale info, dmg and wrong arch layout", async () => {
-  const h = harness({ version: "3.17.2" });
+  const h = harness({ cfg: { pending_zip_patch: true }, version: "3.17.2" });
   try {
     // resources/app.asar 必须先就位：existsSync 守卫先于候选判定，缺失会屏蔽全部用例
     fs.mkdirSync(path.join(h.root, "resources"), { recursive: true });
@@ -129,7 +131,7 @@ test("candidate gating: running version, stale info, dmg and wrong arch layout",
 });
 
 test("x64 candidates are patched the same way on x64 hosts", async () => {
-  const h = harness({ version: "3.17.2" });
+  const h = harness({ cfg: { pending_zip_patch: true }, version: "3.17.2" });
   try {
     fs.mkdirSync(path.join(h.root, "resources"), { recursive: true });
     fs.writeFileSync(path.join(h.root, "resources", "app.asar"), "asar");
@@ -140,8 +142,9 @@ test("x64 candidates are patched the same way on x64 hosts", async () => {
   } finally { h.cleanup(); }
 });
 
-test("pending_zip_patch:false and non-darwin register no watcher and never spawn", async () => {
-  for (const opts of [{ cfg: { pending_zip_patch: false } }, { platform: "win32" }]) {
+test("clean fork default-off: key omitted or false, and non-darwin, register no watcher and never spawn", async () => {
+  // clean 分叉契约：键省略=缺省关（上游为缺省开）；显式 false 同样不注册。
+  for (const opts of [{ cfg: {} }, { cfg: { pending_zip_patch: false } }, { platform: "win32" }]) {
     const h = harness(opts);
     try {
       stageUpdate(h);
@@ -154,7 +157,7 @@ test("pending_zip_patch:false and non-darwin register no watcher and never spawn
 });
 
 test("three consecutive failures back off for ten minutes, success resets the counter", async () => {
-  const h = harness();
+  const h = harness({ cfg: { pending_zip_patch: true } });
   try {
     stageUpdate(h);
     fs.mkdirSync(path.join(h.root, "resources"), { recursive: true });
@@ -178,7 +181,7 @@ test("three consecutive failures back off for ten minutes, success resets the co
 });
 
 test("shuttingDown gates the fallback poll (before-quit cleanup is asserted in inject-main-lifecycle)", async () => {
-  const h = harness();
+  const h = harness({ cfg: { pending_zip_patch: true } });
   try {
     stageUpdate(h);
     const watcherCount = h.intervals.length;
