@@ -107,7 +107,8 @@ test('resident timeout cannot later release a newer query or deliver stale outpu
 
 test('idle/config-off/no-window/quit stop resident and never schedule unconditional restarts', async () => {
   for (const mode of ['idle', 'config', 'window', 'quit']) {
-    const h = harness(); await flush(); const p = h.procs[0];
+    // clean 分叉：pending_zip_patch 缺省关，quit 断言的 60s 兜底轮询需显式开启才注册
+    const h = harness(mode === 'quit' ? { pending_zip_patch: true } : undefined); await flush(); const p = h.procs[0];
     p.stdout.emit('data', '{"recent":[]}\n');
     if (mode === 'idle') h.runTimer(30000);
     if (mode === 'config') { h.setCfg({ resident: false, hot_reload: false }); h.intervals.find(t => t.ms === 5000).fn(); }
