@@ -2,9 +2,9 @@
 
 # ZCode Token 速度状态栏（clean 分叉）
 
-> **本仓库是 [ByteRax/zcode-token-usage-statusbar](https://github.com/neoblackxt/zcode-token-usage-statusbar) 的去入侵化分叉**（`clean` 分支，基于上游 v1.5.12）：
+> **本仓库是 [ByteRax/zcode-token-usage-statusbar](https://github.com/neoblackxt/zcode-token-usage-statusbar) 的去入侵化分叉**（`clean` 分支，基于上游 v1.5.13）：
 > hook 任何路径都不向模型上下文注入文字、不自动安装/修改客户端文件、后台自动更新与引擎补丁缺省关闭、卸载还原全部修改。
-> 全部功能保留，仅改为显式开启。详见 **[CLEAN_FORK.md](CLEAN_FORK.md)**（含 v1.5.9 全量与 v1.5.10~v1.5.12 增量安全审计结论：未发现恶意代码）。
+> 全部功能保留，仅改为显式开启。详见 **[CLEAN_FORK.md](CLEAN_FORK.md)**（含 v1.5.9 全量与 v1.5.10~v1.5.13 增量安全审计结论：未发现恶意代码）。
 
 **让 ZCode 的对话窗口底部多一条小状态栏：模型有多快、token 花了多少、上下文还剩多少，一眼看到。**
 
@@ -159,7 +159,7 @@ https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases
 
 - **这不是 ZCode 官方功能**，是社区插件；状态条靠修改 ZCode 的程序文件（`app.asar`）实现，卸载时只删自己加的那部分。
 - **数据与联网**：本地用量查询使用 SQLite；插件更新会联网下载代码（⚙ 可关自动更新），远程会话通过所配置的 SSH / WSL 通道查询。额度与重置卡还会向对应服务查询。
-- **本机调试端口**：为实机调试与自动化 QA，插件在 ZCode 主进程固定补开 Chromium 调试口 `127.0.0.1:9229`（仅本机回环，不对外联网）。同机其它本地进程可借此读取或操控 ZCode 窗口内容；设环境变量 `ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1` 可与宿主一起关闭该口，不接受此调试面请卸载本插件。
+- **本机调试端口（clean 分叉缺省关）**：上游为实机调试与自动化 QA 在 ZCode 主进程固定补开 Chromium 调试口 `127.0.0.1:9229`；clean 分叉默认不开启——该端口允许同机其它本地进程读取或操控 ZCode 窗口内容（仅本机回环，不对外联网）。需要实机调试/QA 时在 config 显式 `cdp_debug_port:true` 开启（仅本机回环）；环境变量 `ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1` 仍优先关闭。
 - **凭据边界**：ZCode 里存的 SSH 密码、私钥口令不会被插件解密使用；额度查询时凭据在内存中使用，不写入日志或诊断；⚙ 面板保存的凭据会持久化在运行目录的 `quota-secrets.json`（支持时设置为 0600）。请求只发送到对应厂商官方域或用户配置的中转站本域，⚙ 里可关闭额度查询；重置卡查询开关独立，如不需要联网查询，需同时关闭两者。Anthropic 数据源需显式启用，启用后可能读取 `~/.claude/.credentials.json`。
 - **token 用量 ≠ 账单**：额度 chip 可显示支持的数据源提供的套餐已用比例或账户余额，但不提供现金扣费账单或计费明细。
 
