@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.13**（tag `v1.5.13`，commit `371091a`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.13`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.14**（tag `v1.5.14`，commit `4a8b4e1`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.14`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -9,9 +9,9 @@
 本目标已固化为仓库最高规范：[AGENTS.md](AGENTS.md) 首节「分叉最高原则：上下文零入侵」——
 对本仓库工作的任何人（含 AI 助手）具有约束力，与上游合并冲突时按该原则裁剪。
 
-## 一、改造清单（相对上游 v1.5.13）
+## 一、改造清单（相对上游 v1.5.14）
 
-| # | 行为 | 上游 v1.5.13 | clean 分叉 | 实现位置 |
+| # | 行为 | 上游 v1.5.14 | clean 分叉 | 实现位置 |
 |---|---|---|---|---|
 | 1 | SessionStart 未注入时自动安装（改 app.asar，恒开无开关） | 无条件自动装 | **不装**，仅 stderr 日志提示 `/install-overlay` | `overlay_install.py` `run_hook()` |
 | 2 | SessionStart 已注入时自动补渲染桥（改 asar 内 renderer 资产） | 每次会话自动补 | **不动**，补桥仅经显式安装命令 | 同上 |
@@ -52,7 +52,7 @@
 后者会还原全部客户端修改包括引擎补丁）。旧键 `plugin_auto_install_overlay` 与环境变量
 `ZUSAGE_PLUGIN_AUTO_INSTALL` 在上游 v1.5.7 起已失效，clean 分叉中无对应行为可开关。
 
-## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10/v1.5.11/v1.5.12/v1.5.13 增量）
+## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.14 增量）
 
 四个独立审计覆盖全部运行时代码（更新/加载器链、凭据与数据流向、安装/补丁链、渲染层载荷
 overlay.js），**均未发现恶意代码**；v1.5.10 增量（token_pricing 费用链、v208 更新红点、
@@ -66,8 +66,11 @@ Windows 探测 CREATE_NO_WINDOW、macOS Helper bundle 拉起 CLI、Busy journal 
 兼容性预判与 force 更新触发（issue #247）、model-puller models.dev api.json 档位目录
 （约 6MB，后台下载、24h 缓存、只落轻量档位索引）、darwin LSUIElement Helper 后台拉起
 （#238）、Ark Agent Plan 额度源认领（#261，只解析本地 provider 配置）、MCP CRLF 与
-ESM 语法自检修复）结论相同：**无新增外发端点**（api.json 复用既有 models.dev 域，
-且仅发生在 ⚙「拉取模型」显式动作链内）、无新自动行为越过分叉红线。要点：
+ESM 语法自检修复）与 v1.5.14 增量（2026-11-09 复核：tooltip  哨兵剥除 v306、
+状态轮播主开关默认关（上游按 2026-11-09 用户规格自行翻转——与分叉方向一致，采纳；
+显式开/关过的存量配置经 loadRotatorConfig 布尔覆盖原样保留）、速率 chip 右键直开设置；
+无新配置键、无网络面、hook 零改动）结论相同：**无新增外发端点**（api.json 复用既有
+models.dev 域，且仅发生在 ⚙「拉取模型」显式动作链内）、无新自动行为越过分叉红线。要点：
 
 - **网络出口全量枚举，无陌生主机**：GitHub/GitCode（更新渠道，含资产 CDN：
   release-assets/objects.githubusercontent.com、file-cdn.gitcode.com、api.gitcode.com）+
@@ -106,10 +109,10 @@ ESM 语法自检修复）结论相同：**无新增外发端点**（api.json 复
     凭据仅驻内存；
   - 诊断文件 `diag-N.json` 含会话 id 摘要（本地，`diag:false` 可关），显式排除凭据类键。
 
-## 四、测试状态（2026-11-09，Windows 本机，v1.5.13 基线）
+## 四、测试状态（2026-11-09，Windows 本机，v1.5.14 基线）
 
-- **Python 全量**：839 项中 0 失败（32 skip 为平台性跳过；v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13 839，增量均为上游新用例：兼容性预判/桥 quiet_hook/项目目录归一化/speed history/ui_element 等，其中上游 8 个 compat-nudge 与桥状态用例随分叉契约重写——提示链在分叉不存在，断言改为「零注入 + bridge 不被调用 + force 信号保留」）。本轮分叉比原版更绿：原版 v1.5.13 在本机 2 败 + 6 错（sqlite 临时目录占用 ×2、sudo 加载器、mode 位断言、渲染桥 ×2、损坏库 CLI），分叉侧因既有 Windows 修复（显式 close、pwd 导入等）与新用例的同类修法全部通过。历史唯一环境性失败 `test_windows_wmi_spawn_real_monitor_exits_cleanly`（v1.5.11 引入）本轮已不在失败面。
-- **Node 全量**：1440 项中 101 失败，**与未改动的原版 v1.5.13 在本机的失败清单逐字一致**（分叉独有失败 = 原版独有失败 = 0；v1.5.12 基线时为 100，+1 为上游新增测试的环境性漂移；上游 CI（macOS）为绿），全部是上游测试在 Windows 的既有环境性失败（Git chip 域的 readdir 顺序/文件系统语义、zcode-start 额度客户端域、inject-main-lifecycle 的宿主形态桩等）。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写。
+- **Python 全量**：839 项中 0 失败（32 skip 为平台性跳过；v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839，增量均为上游新用例：兼容性预判/桥 quiet_hook/项目目录归一化/speed history/ui_element 等，其中上游 8 个 compat-nudge 与桥状态用例随分叉契约重写——提示链在分叉不存在，断言改为「零注入 + bridge 不被调用 + force 信号保留」）。分叉恒比原版绿：原版 v1.5.13/v1.5.14 在本机分别 2F+6E / 3F+6E（sqlite 临时目录占用 ×2、sudo 加载器、mode 位断言、渲染桥 ×2、损坏库 CLI 等 Windows 环境性失败），分叉侧因既有 Windows 修复（显式 close、pwd 导入等）与新用例的同类修法全部通过。
+- **Node 全量**：1441 项中 101 失败，**与未改动的原版 v1.5.13/v1.5.14 在本机的失败清单均逐字一致**（分叉独有失败 = 原版独有失败 = 0；v1.5.12 基线时为 100，+1 为上游新增测试的环境性漂移；上游 CI（macOS）为绿），全部是上游测试在 Windows 的既有环境性失败（Git chip 域的 readdir 顺序/文件系统语义、zcode-start 额度客户端域、inject-main-lifecycle 的宿主形态桩等）。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写。
 - **本机跑 updater 系测试的前置条件**：`python3` 必须是真实解释器。Windows 的 Microsoft Store `python3` 执行别名存根会导致跨进程锁永不就绪 → 批量失败与挂起（此前以在 miniforge env 目录复制 `python3.exe` 解决，删除该文件即回滚）。
 - 分叉侧所有与"默认值/注入语义"相关的测试已翻转为新契约，auto 流程用例一律显式 `plugin_auto_update: true` / `pending_zip_patch: true` 前提（被测行为不变，只显式化原来隐式依赖的默认开）。教训沉淀：**文档类改动也要跑相关契约测试**——v1.5.10 的 f672dcc 改了 install-overlay.md 却未跑 `test_restart_notice`，漏掉一处 assertIn 横幅断言，v1.5.11 全量跑才暴露（本次已反转补齐）。
 
@@ -182,6 +185,14 @@ ESM 语法自检修复）结论相同：**无新增外发端点**（api.json 复
   原提交。另翻转 CDP 9229 缺省（改造表 #12，上游 `tests/inject-cdp-guard.test.cjs`
   六分支重写为分叉契约）并补回 rebase 挤掉的 `tests/inject-autocompact.test.cjs`
   `source` 定义。
+  v1.5.14 rebase 实录（2026-11-09）：11 个分叉提交重放，仅初始 clean 提交撞两份
+  manifest 冲突（分叉侧），其余零冲突；上游 v306 台账升号/轮播主开关默认关/chip
+  右键开设置全部自动并入（分片 06 的分叉文案编辑区与上游改动区不相邻，门禁
+  `--check` 与 `node --check` 双绿确认）。**教训（老坑复发，正式入册）：rebase 基线
+  一律用上游 commit 号（如 371091a），不用本地 tag**——发布时 `git tag -fa vX.Y.Z`
+  会把本地 tag 重指到分叉提交，之后 `git rebase --onto 新tag 旧tag clean` 的范围
+  就是空集，clean 会被**静默**置成纯上游（本轮 `v1.5.13..clean` 为空即此坑，
+  靠 `git log` 检出发现，从 clean-pre-v1514 备份恢复后用 371091a 重做）。
 - 测试套件中与"缺省开"相关的断言已随本分叉翻转为"缺省关"（见提交 diff 中 tests/ 部分）。
 - 教训（v1.5.13 rebase 沉淀）：`scripts/build_overlay.py --check` 只校验产物与分片
   **逐字节一致**，不做 JS 语法检查——分片被改出语法错误时门禁照样绿。改分片后必须
