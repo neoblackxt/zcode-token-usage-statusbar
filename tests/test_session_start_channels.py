@@ -202,42 +202,29 @@ class SessionStartChannelTests(unittest.TestCase):
         self.assertEqual(output, {"suppressOutput": True})
         self.install.assert_not_called()
 
-    def test_pending_nudge_names_host_incompatibility_when_build_unregistered(self):
-        # issue #247：已装版本未登记适配当前宿主 build 时，反复「已排定」必须讲清为什么
-        # 排定也修不好（需要升级插件），且自动更新绕过 1h 限频立即尝试。
-        self.install.side_effect = lambda before_publish: False
-        with mock.patch.object(self.installer, "_host_build", return_value="3.17.2"), \
-                mock.patch.object(self.installer, "_host_registered", return_value=False), \
-                mock.patch.object(self.pi, "pending_tmp", return_value={"operation": "install"}), \
-                mock.patch.object(self.pi, "client_running", return_value=True):
-            output, _ = self.invoke()
-        context = self.context(output)
-        self.assertIn("已排定", context)
-        self.assertIn("未登记适配 ZCode 3.17.2", context)
-        self.updater.start_auto_update.assert_called_once_with(self.runtime, self.pi, force=True)
+    def test_unregistered_host_no_nudge_but_force_update_signal_kept(self):
+        # clean 分叉反转（原上游 issue #247 三个 nudge 用例合并）：已装版本未登记适配
+        # 当前宿主 build 时，上游会在「已排定/受保护目录/安装失败」三条 nudge 里补兼容性
+        # 说明并注入上下文——分叉 run_hook 无这些路径，hook 输出恒纯协议 JSON（零注入），
+        # 兼容性信息只经 LAST_DIAG 落本地 plugin-session-start.json；唯一保留的上游语义
+        # 是 force 更新信号：未登记且未注入时 start_auto_update 收到 force=True（缺省关
+        # 门控仍由 plugin_auto_update.py 守住，force 只对显式开启者加速）。
+        for extra in ({}, {"target_writable": False}):
+            with self.subTest(extra=extra):
+                self.updater.reset_mock()
+                self.install.side_effect = lambda before_publish: False
+                with mock.patch.object(self.installer, "_host_build", return_value="3.17.2"),                         mock.patch.object(self.installer, "_host_registered", return_value=False),                         mock.patch.object(self.pi, "pending_tmp", return_value={"operation": "install"}),                         mock.patch.object(self.pi, "client_running", return_value=True),                         mock.patch.object(self.pi, "target_writable", return_value=extra.get("target_writable", True)):
+                    output, _ = self.invoke()
+                self.assertEqual(output, {"suppressOutput": True})
+                self.install.assert_not_called()
+                self.updater.start_auto_update.assert_called_once_with(self.runtime, self.pi, force=True)
 
-    def test_protected_dir_nudge_also_carries_the_compat_note(self):
-        # issue #247 review：受保护目录提示分支同样要补兼容性说明
-        self.install.side_effect = lambda before_publish: False
-        with mock.patch.object(self.installer, "_host_build", return_value="3.17.2"), \
-                mock.patch.object(self.installer, "_host_registered", return_value=False), \
-                mock.patch.object(self.pi, "pending_tmp", return_value={"operation": "install"}), \
-                mock.patch.object(self.pi, "client_running", return_value=True), \
-                mock.patch.object(self.pi, "target_writable", return_value=False):
+    def test_registered_host_starts_update_without_force(self):
+        # 对照：宿主版本已登记时 force=False（正常 1h 限频口径），不因预判旁路。
+        with mock.patch.object(self.installer, "_host_build", return_value="3.17.2"),                 mock.patch.object(self.installer, "_host_registered", return_value=True):
             output, _ = self.invoke()
-        context = self.context(output)
-        self.assertIn("受保护目录", context)
-        self.assertIn("未登记适配 ZCode 3.17.2", context)
-
-    def test_generic_retry_nudge_also_carries_the_compat_note(self):
-        # issue #247 review：普通安装失败提示分支同样要补兼容性说明
-        self.install.side_effect = lambda before_publish: False
-        with mock.patch.object(self.installer, "_host_build", return_value="3.17.2"), \
-                mock.patch.object(self.installer, "_host_registered", return_value=False):
-            output, _ = self.invoke()
-        context = self.context(output)
-        self.assertIn("自动安装未完成", context)
-        self.assertIn("未登记适配 ZCode 3.17.2", context)
+        self.assertEqual(output, {"suppressOutput": True})
+        self.updater.start_auto_update.assert_called_once_with(self.runtime, self.pi, force=False)
 
     def test_session_record_carries_host_diagnostic(self):
         # issue #247：plugin-session-start.json 带 host 诊断，排障不再只有「补丁已排定」；
@@ -250,15 +237,18 @@ class SessionStartChannelTests(unittest.TestCase):
         self.assertIs(record["host"]["injected"], False)
         self.assertNotIn("bridge", record["host"])   # 安装未成功：如实缺省，不冒充桥状态
 
-    def test_session_record_carries_bridge_status_when_injected(self):
-        # 已注入分支的桥状态进诊断（变异 B-8a：此前只走安装成功分支测不到）
+    def test_session_record_injected_has_no_bridge_field_in_clean_fork(self):
+        # clean 分叉反转：已注入分支不自动补桥（ensure_renderer_bridge 不被调用），
+        # LAST_DIAG 只记 hostBuild/pluginVersion/injected，无 bridge 键——补桥属
+        # /install-overlay 显式链，SessionStart 不碰。
         self.make_asar(injected=True)
         with mock.patch.object(self.installer, "ensure_renderer_bridge",
-                               return_value={"status": "skipped-unknown", "version": None}):
+                               return_value={"status": "skipped-unknown", "version": None}) as bridge:
             self.invoke()
+        bridge.assert_not_called()
         record = json.loads((self.runtime / "plugin-session-start.json").read_text(encoding="utf-8"))
         self.assertIs(record["host"]["injected"], True)
-        self.assertEqual(record["host"]["bridge"], "skipped-unknown")
+        self.assertNotIn("bridge", record["host"])
 
     def test_pending_without_running_client_keeps_retry_hint(self):
         # clean 分叉反转：待收尾包 + 客户端未运行同样零动作零提示。
