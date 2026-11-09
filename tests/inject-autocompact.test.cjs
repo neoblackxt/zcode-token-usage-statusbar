@@ -9,6 +9,9 @@ const vm = require("vm");
 
 const { getInjectSlice } = require("./helpers/overlay-extract.cjs");
 
+// clean 分叉契约测试用：读主 loader 源码钉死缺省关门控写法
+const source = fs.readFileSync(path.join(__dirname, "..", "inject-main.cjs"), "utf8");
+
 function pollSlice() {
   return getInjectSlice("pollPluginRequests");
 }

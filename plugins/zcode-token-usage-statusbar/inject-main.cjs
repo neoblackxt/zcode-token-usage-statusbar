@@ -29,17 +29,22 @@ const TURN_STATS = path.join(HERE, "turn-stats.js");
 const ZUSAGE = path.join(HERE, "zusage.py");
 const TOKEN_RATE = path.join(HERE, "token_rate.py");
 const LOG = (...a) => console.error("[zusage]", ...a);
-/* CDP 调试口：正式包宿主仅 !app.isPackaged 开 9229（宿主 index.ts），这里 ready 前强制补开。
- * 尊重两类既有出口：宿主同款逃生口 env ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1，
+/* CDP 调试口：正式包宿主仅 !app.isPackaged 开 9229（宿主 index.ts），上游在 ready 前
+ * 强制补开。clean 分叉缺省关（改造表 #12）：这是纯开发者调试/QA 面（插件运行时零消费方），
+ * 默认为本机全部进程打开可读控窗口的控制通道不可接受——config 显式 cdp_debug_port:true
+ * 才补开。尊重两类既有出口：宿主同款逃生口 env ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1，
  * 以及用户显式传入的 --remote-debugging-port（Chromium 同名 switch 后者覆盖，append 前查
  * hasSwitch 不抢用户值）。守卫与 append 一并收在 try 内：宿主缺失 commandLine/hasSwitch
  * 的极端形态退回既有的 catch 日志路径，不改变 VM/stub 测试环境下的可加载性。
  * 注入行是入口尾部浮动 import，loader 顶层先于 app ready 执行（Electron 45 实证 LOADER-TOP
  * isReady=false 且 /json/version 可达）；端口被占（如同跑开发实例）时静默放弃绑定，不影响启动。 */
 try {
+  let cdpCfg = {};
+  try { cdpCfg = JSON.parse(fs.readFileSync(CONFIG, "utf8")) || {}; }   // readCfg 定义在本块之后，这里就地读一次
+  catch (e) { cdpCfg = {}; }
   let cdpSkip = process.env.ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT === "1";
   if (!cdpSkip && app.commandLine && typeof app.commandLine.hasSwitch === "function" && app.commandLine.hasSwitch("remote-debugging-port")) cdpSkip = true;
-  if (!cdpSkip) app.commandLine.appendSwitch("remote-debugging-port", "9229");
+  if (!cdpSkip && cdpCfg.cdp_debug_port === true) app.commandLine.appendSwitch("remote-debugging-port", "9229");   // clean 分叉：缺省关，显式 true 才补开调试口
 }
 catch (e) { LOG("cdp remote-debugging-port switch failed:", e.message); }
 const loadedHashes = { _loadedAt: Date.now() - process.uptime() * 1000 };

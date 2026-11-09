@@ -803,29 +803,23 @@ print(json.dumps(operations))
         self.updater.start_auto_update.assert_called_once_with(self.runtime, self.pi, force=True)
 
     def test_compat_notice_fires_once_per_host_build_and_plugin_version(self):
-        # issue #247：已注入但渲染桥按未知版本跳过（skipped-unknown）→ 去重提示 +
-        # 二次强制更新；同一宿主版本 × 已装版本只提示一次。
+        # clean 分叉反转（原上游 issue #247 双提示用例）：已注入 + 桥 skipped-unknown 时
+        # 上游会 nudge 兼容性说明（注入 additionalContext）并二连拉 force 更新——分叉
+        # run_hook 已注入分支不补桥、不提示、不写 .plugin-compat-notice.json；唯一保留
+        # 的兼容性预判产物是 LAST_DIAG 本地诊断与一次 start_auto_update（st=True 时
+        # force=False：已注入不满足「未注入才 force」口径）。
         self.write_config({"asar_path": str(self.asar)})
         self.write_asar(self.asar, version="9.9.9")
         self.assertEqual(self.main("install")[0], 0)   # 注入行由安装器写入（指向本临时运行目录）
         with mock.patch.object(self.installer, "ensure_renderer_bridge",
-                               return_value={"status": "skipped-unknown", "version": "9.9.9"}), \
-                mock.patch.object(self.installer, "_host_registered", return_value=False):
+                               return_value={"status": "skipped-unknown", "version": "9.9.9"}) as bridge,                 mock.patch.object(self.installer, "_host_registered", return_value=False):
             output, _ = self.hook()
-        self.assertIn("未登记适配 ZCode 9.9.9", output["systemMessage"])
-        self.assertIn("v1.0.0", output["systemMessage"])
-        marker = json.loads((self.runtime / ".plugin-compat-notice.json").read_text(encoding="utf-8"))
-        self.assertEqual(marker, {"hostBuild": "9.9.9", "pluginVersion": "1.0.0"})
-        self.updater.start_auto_update.assert_has_calls(
-            [mock.call(self.runtime, self.pi, force=False), mock.call(self.runtime, self.pi, force=True)])
-        self.updater.start_auto_update.reset_mock()
-        with mock.patch.object(self.installer, "ensure_renderer_bridge",
-                               return_value={"status": "skipped-unknown", "version": "9.9.9"}), \
-                mock.patch.object(self.installer, "_host_registered", return_value=False):
-            output2, _ = self.hook()
-        self.assertNotIn("systemMessage", output2)   # 去重：不再提示（运行时动态桥兜底）
-        self.updater.start_auto_update.assert_has_calls(
-            [mock.call(self.runtime, self.pi, force=False), mock.call(self.runtime, self.pi, force=True)])
+        bridge.assert_not_called()                      # 分叉：SessionStart 不自动补桥
+        self.assertEqual(output, {"suppressOutput": True})   # 零注入：无 systemMessage
+        self.assertFalse((self.runtime / ".plugin-compat-notice.json").exists())
+        self.updater.start_auto_update.assert_called_once_with(self.runtime, self.pi, force=False)
+        self.assertEqual(self.installer.LAST_DIAG["hostBuild"], "9.9.9")
+        self.assertIs(self.installer.LAST_DIAG["injected"], True)
 
     def test_compat_notice_includes_last_update_failure_reason(self):
         # issue #247：plugin-update.json 的 lastError（检查阶段失败此前完全不落盘）进提示
@@ -855,31 +849,35 @@ print(json.dumps(operations))
         self.assertIn("已触发插件自动更新", self.installer._compat_notice_line(self.runtime, "9.9.9"))
 
     def test_compat_notice_refires_after_the_plugin_version_changes(self):
-        # 去重粒度是 宿主版本 × 已装版本：同宿主换插件版本必须重新提示
+        # clean 分叉反转：去重 marker 机制随提示一起不存在——预置 marker、换插件版本
+        # 都不产生任何提示或 marker 改写；输出恒纯协议 JSON。
         self.write_config({"asar_path": str(self.asar)})
         self.write_asar(self.asar, version="9.9.9")
         self.assertEqual(self.main("install")[0], 0)
         marker_file = self.runtime / ".plugin-compat-notice.json"
         marker_file.write_text(json.dumps({"hostBuild": "9.9.9", "pluginVersion": "0.0.9"}), encoding="utf-8")
         with mock.patch.object(self.installer, "ensure_renderer_bridge",
-                               return_value={"status": "skipped-unknown", "version": "9.9.9"}), \
-                mock.patch.object(self.installer, "_host_registered", return_value=False):
+                               return_value={"status": "skipped-unknown", "version": "9.9.9"}) as bridge,                 mock.patch.object(self.installer, "_host_registered", return_value=False):
             output, _ = self.hook()
-        self.assertIn("未登记适配 ZCode 9.9.9", output["systemMessage"])
+        bridge.assert_not_called()
+        self.assertEqual(output, {"suppressOutput": True})
         self.assertEqual(json.loads(marker_file.read_text(encoding="utf-8")),
-                         {"hostBuild": "9.9.9", "pluginVersion": "1.0.0"})
+                         {"hostBuild": "9.9.9", "pluginVersion": "0.0.9"})   # 原样未动
 
     def test_fresh_install_on_unregistered_host_names_the_gap_instead_of_silence(self):
-        # issue #247 review：自动安装刚成功但桥按未知版本跳过——不能静默交差
+        # clean 分叉反转：未注入 + 未登记宿主——上游自动安装后会 nudge 兼容性说明；
+        # 分叉不自动安装，只留 stderr 一行 /install-overlay 指引，LAST_DIAG 如实记
+        # injected=False，无 bridge 键，输出零注入。
         self.write_config({"asar_path": str(self.asar)})
         self.write_asar(self.asar, version="9.9.9")
         with mock.patch.object(self.installer, "ensure_renderer_bridge",
-                               return_value={"status": "skipped-unknown", "version": "9.9.9"}), \
-                mock.patch.object(self.installer, "_host_registered", return_value=False):
-            output, _ = self.hook()
-        self.assertIn("未登记适配 ZCode 9.9.9", output["systemMessage"])
-        self.assertTrue(self.installer.LAST_DIAG["injected"])
-        self.assertEqual(self.installer.LAST_DIAG["bridge"], "skipped-unknown")
+                               return_value={"status": "skipped-unknown", "version": "9.9.9"}) as bridge,                 mock.patch.object(self.installer, "_host_registered", return_value=False):
+            output, stderr = self.hook()
+        bridge.assert_not_called()
+        self.assertEqual(output, {"suppressOutput": True})
+        self.assertIn("/install-overlay", stderr)
+        self.assertIs(self.installer.LAST_DIAG["injected"], False)
+        self.assertNotIn("bridge", self.installer.LAST_DIAG)
 
     def test_run_hook_publishes_host_diagnostic_for_session_start_record(self):
         # LAST_DIAG 是 session-start.py 写入 plugin-session-start.json 的诊断来源；
@@ -887,8 +885,10 @@ print(json.dumps(operations))
         self.write_config({"asar_path": str(self.asar)})
         self.write_asar(self.asar, version="9.9.9")
         self.hook()
+        # clean 分叉：夹具未显式 install，上游 run_hook 会自动装所以记 injected=True；
+        # 分叉不自动安装，如实记 False（无 bridge 键）。
         self.assertEqual(self.installer.LAST_DIAG,
-                         {"hostBuild": "9.9.9", "pluginVersion": "1.0.0", "injected": True, "bridge": "skipped-error"})
+                         {"hostBuild": "9.9.9", "pluginVersion": "1.0.0", "injected": False})
 
     def test_windows_candidates_cover_custom_drive_program_files(self):
         # 回归：ZCode 装在 D:\Program Files\ZCode 等非默认位置时探测不到，
