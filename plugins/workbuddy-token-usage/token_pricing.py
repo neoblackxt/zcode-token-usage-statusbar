@@ -11,7 +11,9 @@ cache_read 与 cache_creation、output_tokens 已含 reasoning，因此
                  + output×output) ÷ 1e6
 单价 USD/百万 token；表内缺费率字段按 0 计（供应商标"缓存不计费"）；
 模型未命中按 DEFAULT_RATES 兜底均价估算（用户选定口径，可能偏差一个数量级）。
-一次性 CLI（json 子命令）只读不拉网；config pricing.fetch=false 彻底关闭联网。
+一次性 CLI（json 子命令）只读不拉网；clean 分叉联网同步缺省关，config
+pricing.fetch=true 显式开启（上游缺省开、键缺失视为 true——与分叉 AGENTS.md
+「自动联网缺省关」原则冲突故翻转；内置烘焙价表离线可用，关闭不损功能）。
 币种换算不在本模块：快照只带 cost_usd 原值与 fx 汇率，¥ 在展示层相乘。
 """
 import json
@@ -566,7 +568,7 @@ _MERGED = None       # builtin+overlay 合并表（代际缓存）
 _FX = None           # {"rate","at","source"}
 _CACHE_PATH = None   # Path
 _CACHE_ST = None     # 已加载的 (st_mtime_ns, st_size)
-_CFG = {"url": PRICING_URL, "fx_url": FX_URL, "fetch": True}
+_CFG = {"url": PRICING_URL, "fx_url": FX_URL, "fetch": False}   # clean 分叉：缺省关
 _WAKE = threading.Event()
 
 
@@ -586,7 +588,7 @@ def configure(cfg=None, config_dir=None):
     with _STATE_LOCK:
         _CFG["url"] = p.get("url") or PRICING_URL
         _CFG["fx_url"] = fx.get("url") or FX_URL
-        _CFG["fetch"] = p.get("fetch") is not False
+        _CFG["fetch"] = p.get("fetch") is True   # clean 分叉：缺省关，显式 true 才联网同步
         _CACHE_PATH = base / "pricing-cache.json"
 
 

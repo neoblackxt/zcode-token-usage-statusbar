@@ -9,7 +9,7 @@
 - 桌面悬浮状态条：生成速度（tok/s）、本轮 / 会话 / 今日 token 用量、缓存命中率、子代理明细、上下文容量、套餐额度 chip、Git 状态 chip。悬停看明细，⚙ 面板可调整显示项。
 - 每条回答末尾自动追加逐问速率行：tok/s、首字延迟、输出 token、生成耗时、会话累计。
 - `/usage` 命令（today / week / models / current）、`token_usage` MCP 工具，以及一个教会智能体查询用量的技能。
-- 源码能力：宿主模型设置中的「⚡ 拉取模型」在确认保存前检测勾选模型，可提示路径修复、补齐有依据的模型配置和工具历史兼容性警告。检测会请求当前供应商、可能消耗额度；正式渠道可用范围及操作边界见[用户指南（中文）](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/user-guide.md#拉取模型与确认检测)。
+- 源码能力：宿主模型设置中的「⚡ 拉取模型」在确认保存前检测勾选模型，可提示路径修复、补齐有依据的模型配置和工具历史兼容性警告。检测会请求当前供应商、可能消耗额度；正式渠道可用范围及操作边界见[用户指南（中文）](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/docs/user-guide.md#拉取模型与确认检测)。
 
 ## 环境要求
 
@@ -35,7 +35,7 @@
 | 执行的命令 | 随插件分发的 Python 脚本；`git`（只读状态查询）；仅对你配置过的远端查询使用 `ssh`/`wsl.exe`。 |
 | 第三方代码 | 不捆绑任何第三方代码——纯 Python 3.8 标准库 + 原生 JavaScript（Electron 主进程 CommonJS）。MIT 许可证；源码在 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar)。 |
 
-SSH/WSL 远端会话需要在每台远端手工部署同版本 `zusage.py`；远端、额度源与多窗口的完整说明见[用户指南](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/user-guide.md)。
+SSH/WSL 远端会话需要在每台远端手工部署同版本 `zusage.py`；远端、额度源与多窗口的完整说明见[用户指南](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/docs/user-guide.md)。
 
 ## 关闭或移除
 
@@ -50,9 +50,9 @@ SSH/WSL 远端会话需要在每台远端手工部署同版本 `zusage.py`；远
 
 ## 配置
 
-默认运行配置在 `~/.zcode/zcode-token-usage-statusbar/config.json`——只合并需要修改的字段。除上述开关外还覆盖远端目标、额度源与显示选项；见 [`config.example.json`](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/config.example.json) 与[用户指南](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/user-guide.md)。
+默认运行配置在 `~/.zcode/zcode-token-usage-statusbar/config.json`——只合并需要修改的字段。除上述开关外还覆盖远端目标、额度源与显示选项；见 [`config.example.json`](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/config.example.json) 与[用户指南](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/docs/user-guide.md)。
 
-**WorkBuddy 数据源（可选）**：`"host": "workbuddy"`（或 `"auto"`）可让查询改读 `~/.workbuddy/workbuddy.db`（会话级上下文与 credit）与会话正文 `projects/*/*.jsonl`（逐请求 token / 缓存 / 思考 / credit / 工具调用）；文件在别处时用 `"hosts": {"workbuddy": {"db_path": "..."}}` 或环境变量 `ZUSAGE_WORKBUDDY_DB`，CLI/MCP 也可单次 `--host workbuddy` / `host: "workbuddy"` 覆盖。缺省仍是 `zcode`；WorkBuddy 没有 asar 链，状态条改走 CDP 注入输入卡。详见 [docs/hosts.md](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/hosts.md)。
+**WorkBuddy 数据源（可选）**：`"host": "workbuddy"`（或 `"auto"`）可让查询改读 `~/.workbuddy/workbuddy.db`（会话级上下文与 credit）与会话正文 `projects/*/*.jsonl`（逐请求 token / 缓存 / 思考 / credit / 工具调用）；文件在别处时用 `"hosts": {"workbuddy": {"db_path": "..."}}` 或环境变量 `ZUSAGE_WORKBUDDY_DB`，CLI/MCP 也可单次 `--host workbuddy` / `host: "workbuddy"` 覆盖。缺省仍是 `zcode`；WorkBuddy 没有 asar 链，状态条改走 CDP 注入输入卡。详见 [docs/hosts.md](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/docs/hosts.md)。
 
 ## 源码与许可证
 

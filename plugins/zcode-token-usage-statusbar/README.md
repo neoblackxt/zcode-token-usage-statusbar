@@ -9,7 +9,7 @@ See model speed, token usage, context size, plan quota, and Git status while you
 - Floating status bar (desktop): generation speed (tok/s), per-turn / session / today token usage, cache hit rate, sub-agent breakdown, context usage, plan-quota chip, Git status chip. Tooltips show details; the ⚙ panel toggles what is shown.
 - Per-answer rate line appended under each reply: tok/s, time to first token, output tokens, duration, session totals.
 - `/usage` command (today / week / models / current), the `token_usage` MCP tool, and a skill that teaches the agent how to query usage.
-- Source capability: **⚡ Pull models** in the host's model settings checks selected models before saving, can repair a verified URL path, fill evidence-backed model settings, and warn about tool-history compatibility. Checks call the current provider and may consume quota; see the [user guide (Chinese)](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/user-guide.md#拉取模型与确认检测) for release availability and limits.
+- Source capability: **⚡ Pull models** in the host's model settings checks selected models before saving, can repair a verified URL path, fill evidence-backed model settings, and warn about tool-history compatibility. Checks call the current provider and may consume quota; see the [user guide (Chinese)](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/docs/user-guide.md#拉取模型与确认检测) for release availability and limits.
 
 ## Requirements
 
@@ -35,7 +35,7 @@ Auto-install is always on (the legacy `plugin_auto_install_overlay` config key a
 | Executed commands | Python scripts shipped with the plugin; `git` (read-only status queries); `ssh`/`wsl.exe` only for remote usage you configured. |
 | Third-party code | None bundled — plain Python 3.8 stdlib, plain JavaScript (Electron main-process CommonJS). MIT licensed; source at [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar). |
 
-Remote sessions (SSH/WSL) need a matching `zusage.py` deployed manually on each remote host; see the [user guide](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/user-guide.md) for the full remote, quota-source, and multi-window details.
+Remote sessions (SSH/WSL) need a matching `zusage.py` deployed manually on each remote host; see the [user guide](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/docs/user-guide.md) for the full remote, quota-source, and multi-window details.
 
 ## Turn off or remove
 
@@ -50,9 +50,9 @@ Remote sessions (SSH/WSL) need a matching `zusage.py` deployed manually on each 
 
 ## Configuration
 
-Default runtime config lives in `~/.zcode/zcode-token-usage-statusbar/config.json` — merge only the fields you change. Beyond the switches above it also covers remote targets, quota sources, and display options; see [`config.example.json`](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/config.example.json) and the [user guide](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/user-guide.md).
+Default runtime config lives in `~/.zcode/zcode-token-usage-statusbar/config.json` — merge only the fields you change. Beyond the switches above it also covers remote targets, quota sources, and display options; see [`config.example.json`](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/config.example.json) and the [user guide](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/docs/user-guide.md).
 
-**WorkBuddy data source (optional)**: `"host": "workbuddy"` (or `"auto"`) points queries at `~/.workbuddy/workbuddy.db` for session context and credits, and at the matching transcripts `projects/*/*.jsonl` for per-request tokens, cache, thinking, credits and tool calls. If the files live elsewhere use `"hosts": {"workbuddy": {"db_path": "..."}}` or `ZUSAGE_WORKBUDDY_DB`; CLI/MCP can also override per call with `--host workbuddy` / `host: "workbuddy"`. The default stays `zcode`; WorkBuddy has no asar chain, so its status bar is injected over CDP into the input card instead. See [docs/hosts.md](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/hosts.md).
+**WorkBuddy data source (optional)**: `"host": "workbuddy"` (or `"auto"`) points queries at `~/.workbuddy/workbuddy.db` for session context and credits, and at the matching transcripts `projects/*/*.jsonl` for per-request tokens, cache, thinking, credits and tool calls. If the files live elsewhere use `"hosts": {"workbuddy": {"db_path": "..."}}` or `ZUSAGE_WORKBUDDY_DB`; CLI/MCP can also override per call with `--host workbuddy` / `host: "workbuddy"`. The default stays `zcode`; WorkBuddy has no asar chain, so its status bar is injected over CDP into the input card instead. See [docs/hosts.md](https://github.com/neoblackxt/zcode-token-usage-statusbar/blob/clean/docs/hosts.md).
 
 ## Source & license
 
