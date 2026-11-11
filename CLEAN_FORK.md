@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.15**（tag `v1.5.15`，commit `d24ca3a`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.15`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.16**（tag `v1.5.16`，commit `1648b15`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.16`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -9,9 +9,9 @@
 本目标已固化为仓库最高规范：[AGENTS.md](AGENTS.md) 首节「分叉最高原则：上下文零入侵」——
 对本仓库工作的任何人（含 AI 助手）具有约束力，与上游合并冲突时按该原则裁剪。
 
-## 一、改造清单（相对上游 v1.5.15）
+## 一、改造清单（相对上游 v1.5.16）
 
-| # | 行为 | 上游 v1.5.14 | clean 分叉 | 实现位置 |
+| # | 行为 | 上游 v1.5.16 | clean 分叉 | 实现位置 |
 |---|---|---|---|---|
 | 1 | SessionStart 未注入时自动安装（改 app.asar，恒开无开关） | 无条件自动装 | **不装**，仅 stderr 日志提示 `/install-overlay` | `overlay_install.py` `run_hook()` |
 | 2 | SessionStart 已注入时自动补渲染桥（改 asar 内 renderer 资产） | 每次会话自动补 | **不动**，补桥仅经显式安装命令 | 同上 |
@@ -52,7 +52,7 @@
 后者会还原全部客户端修改包括引擎补丁）。旧键 `plugin_auto_install_overlay` 与环境变量
 `ZUSAGE_PLUGIN_AUTO_INSTALL` 在上游 v1.5.7 起已失效，clean 分叉中无对应行为可开关。
 
-## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.15 增量）
+## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.16 增量）
 
 四个独立审计覆盖全部运行时代码（更新/加载器链、凭据与数据流向、安装/补丁链、渲染层载荷
 overlay.js），**均未发现恶意代码**；v1.5.10 增量（token_pricing 费用链、v208 更新红点、
@@ -84,7 +84,19 @@ plugin_auto_update 缺省关门控或用户显式触发——不构成新默认�
 （issue #279：env 双别名 → CLI config sessionDbPath → dataBaseDir 迁移目录，全本地读）；
 **Python 聚合水位缓存**（流式卡顿治理，纯本地性能）；**Web 旁挂版整体移除**（web/ 目录、
 测试、规则与全部文档引用）；bridge 补装权限误报分流（占用/杀毒拦截与受保护目录区分）；
-词包弹框/速度卡排版/项目累计 tooltip（v329）/MCP host 显式报错等 UI 与容错批）结论相同：
+词包弹框/速度卡排版/项目累计 tooltip（v329）/MCP host 显式报错等 UI 与容错批）与 v1.5.16 增量（2026-11-11 复核：**宿主凭据 enc:v2 双信封适配**（PR #289 四轮复审——宿主 3.18.0 起
+登录凭据的加密密钥存 OS 凭据库，插件经**宿主自带** @napi-rs/keyring 模块在进程内只读（不调
+外部命令、不写凭据库条目），或取宿主 managed secret（`ZCODE_CREDENTIAL_SECRET`/`_FILE`、
+凭据同目录 `credential-secret`）；未知 `enc:*` 代际与任何密文形态一律拒绝、绝不把密文当
+token 外发；失败冷却+失配限频+按目录负缓存防风暴——属已披露「解密宿主凭据查额度」缺省开
+链条的代际适配，解密结果仍只发各厂商官方域）；**3.18.0 适配批**（engine-patch 登记表新条目
++旧条目锚点显式字面量化（防滚动 ANCHOR 时旧条目静默继承新锚点，测试锁表守护）、
+renderer_bridge HOST_TARGETS 新条目（表外 fail-closed 不变）、overlay v330：loading 行
+选择器双兼容（旧结构优先）+多 loading 行打字基准改挂行自身属性修互踩+label 未命中不再隐藏
+宿主耗时格）；**Windows 可见监控存活**（PR #292：显式安装链内 breakaway 被拒改走 WMI
+静默监控，既有 WMI 机制与 `ZUSAGE_MONITOR_NO_WMI` 逃生口不变）；**拉取模型套餐源 pending
+重问**（v2 密钥异步未热时 400ms 重问一次、仍无则提示凭据暂不可用，绝不落「单供应商兜底」
+误投别家；planTokenOf 补密文守卫）结论相同：
 **无新增外发端点**（改名探测复用 api.github.com 与 github.com 更新域；model-pull 探测
 发往用户自己配置的供应商域）、无新自动行为越过分叉红线（WorkBuddy 全链在 ZCode 构建里
 惰性；「按库存在性探测」上游自己也做成显式 opt-in）。要点：
@@ -126,10 +138,10 @@ plugin_auto_update 缺省关门控或用户显式触发——不构成新默认�
     凭据仅驻内存；
   - 诊断文件 `diag-N.json` 含会话 id 摘要（本地，`diag:false` 可关），显式排除凭据类键。
 
-## 四、测试状态（2026-11-11，Windows 本机，v1.5.15 基线）
+## 四、测试状态（2026-11-11，Windows 本机，v1.5.16 基线）
 
-- **Python 全量**：953 项中 0 失败（32 skip 为平台性跳过；v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953，增量均为上游新用例：WorkBuddy 宿主/插件包一致性、agent 策略、库路径解析 #279、聚合水位缓存、改名迁移探测等，其中上游 8 个 compat-nudge 与桥状态用例随分叉契约重写——提示链在分叉不存在，断言改为「零注入 + bridge 不被调用 + force 信号保留」）。分叉恒比原版绿：原版 v1.5.15 在本机 4F+4E（sudo 加载器、mode 位断言、sqlite 临时目录占用 ×2、渲染桥 ×2、损坏库 CLI 等 Windows 环境性失败），分叉侧因既有 Windows 修复（显式 close、pwd 导入等）与新用例的同类修法全部通过。首轮并跑曾现 2 个分叉侧失败均已定位处置：①`test_workbuddy_plugin` 副本一致性——分叉改过根 token_pricing.py（pricing.fetch 缺省关）但未同步 WorkBuddy 构建副本，跑 `scripts/sync_workbuddy_plugin.py` 把分叉改动带进副本后绿（**原则随副本走：分叉发行的任何拷贝都带缺省关**）；②`test_quiet_monitor` WMI 实机拉起为竞态抖动（监控先于 OpenProcess 退出，install_monitor.py 与上游逐字节相同，单独重跑即绿，串行全量重跑 0 失败）。
-- **Node 全量**：1582 项中 104 失败，**与未改动的原版 v1.5.15 在本机的失败清单逐字一致**（分叉独有失败 = 原版独有失败 = 0；v1.5.14 基线时 101，+3 为上游新增测试的环境性漂移；分叉比原版多 1 项为分叉契约用例；上游 CI（macOS）为绿），全部是上游测试在 Windows 的既有环境性失败（Git chip 域的 readdir 顺序/文件系统语义、zcode-start 额度客户端域、inject-main-lifecycle 的宿主形态桩等）。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写。
+- **Python 全量**：958 项中 0 失败（32 skip 为平台性跳过；v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958，增量均为上游新用例：enc:v2 取钥分发/冷却/失配限频/密文守卫、Windows 可见监控 breakaway→WMI 回退等）。分叉恒比原版绿：原版 v1.5.16 在本机 935 中 9F（sudo 加载器、sqlite 临时目录占用 ×2、渲染桥 ×2、损坏库 CLI、mode 位、WMI 实机竞态 ×1——该竞态用例四套件并跑时双侧都失败、单测双侧 3/3 全绿，属负载竞态抖动而非分叉回归；其余 8 项为既有 Windows 环境性失败，v1.5.13 起每次基线同款）。分叉侧首轮 1 失败即同款 WMI 竞态抖动，单测重跑即绿，串行全量重跑 0 失败。
+- **Node 全量**：1634 项中 110 失败，**与未改动的原版 v1.5.16 在本机的失败清单逐字一致**（分叉独有失败 = 原版独有失败 = 0；v1.5.15 基线时 1582/104，+52 为上游新增测试（quota-v2 凭据链、overlay 轮播/拉取模型、引擎补丁锁表等），失败 104→110 为新测试的 Windows 环境性漂移；分叉比原版多 1 项为分叉契约用例；上游 CI（macOS）为绿），全部是上游测试在 Windows 的既有环境性失败（Git chip 域的 readdir 顺序/文件系统语义、zcode-start 额度客户端域、inject-main-lifecycle 的宿主形态桩等）。首轮四套件并跑曾现 1 个分叉侧 runtime-lock 负载竞态（子进程未就绪即退出），单文件重跑 14/14 全绿，排除后失败清单逐字一致。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写。
 - **本机跑 updater 系测试的前置条件**：`python3` 必须是真实解释器。Windows 的 Microsoft Store `python3` 执行别名存根会导致跨进程锁永不就绪 → 批量失败与挂起（此前以在 miniforge env 目录复制 `python3.exe` 解决，删除该文件即回滚）。
 - 分叉侧所有与"默认值/注入语义"相关的测试已翻转为新契约，auto 流程用例一律显式 `plugin_auto_update: true` / `pending_zip_patch: true` 前提（被测行为不变，只显式化原来隐式依赖的默认开）。教训沉淀：**文档类改动也要跑相关契约测试**——v1.5.10 的 f672dcc 改了 install-overlay.md 却未跑 `test_restart_notice`，漏掉一处 assertIn 横幅断言，v1.5.11 全量跑才暴露（本次已反转补齐）。
 
@@ -221,6 +233,14 @@ plugin_auto_update 缺省关门控或用户显式触发——不构成新默认�
   静默换成上游正文（本轮首跑即误用，靠后续冲突里 HEAD 侧出现上游横幅文案检出，
   `git rebase --abort` 后重来）。版本对齐提交顺带清掉上游 v1.5.15 已删除的 Web 旁挂版
   全部文档引用（README×3 各 3 处）并把插件 README 新增 ByteRax 文档链接重定向到分叉。
+  v1.5.16 rebase 实录（2026-11-11）：13 个分叉提交重放（基线 d24ca3a → 1648b15），
+  冲突仅初始 clean 提交（README.md + 两 manifest）与 redirect 提交（README.en/zh-CN）
+  两处——分叉改写文件一律取 `--theirs`（§五教训执行），其余 11 个提交零冲突自动并入；
+  分片 06/09 的分叉编辑区与上游 v330 改动区自动合并成功，`build_overlay --check`/
+  `sync_plugin --check`/`node --check` 三绿。上游 v1.5.16 对 README×3 新增的凭据钥匙串
+  披露段在冲突取侧时随上游侧丢失，版本对齐提交按分叉措辞补回（README.en 用上游英文
+  原文）。本轮无新改造表条目（上游新行为面全部为惰性/显式链/本地读，见 §三 v1.5.16
+  增量）；workbuddy 同步面零改动（`sync_workbuddy_plugin --check` 直接过）。
 - 测试套件中与"缺省开"相关的断言已随本分叉翻转为"缺省关"（见提交 diff 中 tests/ 部分）。
 - 教训（v1.5.13 rebase 沉淀）：`scripts/build_overlay.py --check` 只校验产物与分片
   **逐字节一致**，不做 JS 语法检查——分片被改出语法错误时门禁照样绿。改分片后必须
