@@ -1,6 +1,6 @@
 {
   "name": "zcode-token-usage-statusbar",
-  "version": "1.5.14",
+  "version": "1.5.15",
   "description": "ZCode token usage query via the token_usage MCP tool, /usage command, and skill (reads the local usage DB). Clean fork: no auto-install of the desktop status bar (explicit /install-overlay only; modifies app.asar - fully quit and reopen ZCode to take effect); hooks never inject text into the model context under any condition (the per-prompt rate background-line injection is removed entirely; answer_rate_line only toggles the deterministic UI stats line); background auto-update defaults off (opt-in via plugin_auto_update:true); auto-compact engine patch defaults off (opt-in via auto_compact_patch:true); macOS pending-update-zip pre-patch defaults off (opt-in via pending_zip_patch:true, macOS only); the local CDP debug port (127.0.0.1:9229) defaults off (opt-in via cdp_debug_port:true, loopback only); uninstall restores every client modification including the engine patch.",
   "author": {
     "name": "xhwxt/ByteRax (clean fork: neoblackxt)"

@@ -126,7 +126,7 @@ Then install **ZCode Token Usage Statusbar** from that market and keep it enable
 https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases
 ```
 
-You can also send the natural-language "three steps" line from the top of this README to the AI and let it add the market and install the plugin for you (it uses terminal commands; the result is identical). Other routes: to hack on the code, point **Settings → Plugins → Add marketplace → Choose directory** at the repository root; to skip the plugin entirely, `git clone` and run `python install.py`; self-hosted ZCode servers have a separately deployed [Web edition](web/README.md), which cannot be installed on the officially hosted website. Pick **one** route and stick with it — see the [installation guide](docs/user-guide.md#插件安装) (Chinese) for step-by-step details.
+You can also send the natural-language "three steps" line from the top of this README to the AI and let it add the market and install the plugin for you (it uses terminal commands; the result is identical). Other routes: to hack on the code, point **Settings → Plugins → Add marketplace → Choose directory** at the repository root; to skip the plugin entirely, `git clone` and run `python install.py`. Pick **one** route and stick with it — see the [installation guide](docs/user-guide.md#插件安装) (Chinese) for step-by-step details.
 
 ### After installing, don't skip these three steps
 
@@ -183,7 +183,7 @@ Cash bills, no — there's no billing data here. Plan quota and balance, yes —
 Detailed desktop guides are currently in Chinese.
 
 - [Feature screenshots](docs/features.md) (Chinese) · [Installation, configuration and troubleshooting](docs/user-guide.md) (Chinese) · [Quota support matrix](docs/quota-support-audit.md) (Chinese)
-- [Web edition (self-hosted)](web/README.md) · [Architecture and data semantics](docs/design-notes.md) (Chinese)
+- [Architecture and data semantics](docs/design-notes.md) (Chinese)
 - [Development and releases](docs/maintaining.md) (Chinese) · [Tests](tests/README.md) (Chinese)
 
 [MIT License](LICENSE)
