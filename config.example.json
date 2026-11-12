@@ -8,7 +8,6 @@
   "quota_enabled": true,
   "reset_badge_enabled": true,
   "auto_compact_patch": false,
-  "pending_zip_patch": false,
   "cdp_debug_port": false,
   "plugin_auto_update": false,
   "context_window": 1000000,

@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.16**（tag `v1.5.16`，commit `1648b15`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.16`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.18**（tag `v1.5.18`，commit `2219bad`；跨 v1.5.17=01bdcd3 / v1.5.18 两版一次 rebase），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.18`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -9,9 +9,9 @@
 本目标已固化为仓库最高规范：[AGENTS.md](AGENTS.md) 首节「分叉最高原则：上下文零入侵」——
 对本仓库工作的任何人（含 AI 助手）具有约束力，与上游合并冲突时按该原则裁剪。
 
-## 一、改造清单（相对上游 v1.5.16）
+## 一、改造清单（相对上游 v1.5.18）
 
-| # | 行为 | 上游 v1.5.16 | clean 分叉 | 实现位置 |
+| # | 行为 | 上游 v1.5.18 | clean 分叉 | 实现位置 |
 |---|---|---|---|---|
 | 1 | SessionStart 未注入时自动安装（改 app.asar，恒开无开关） | 无条件自动装 | **不装**，仅 stderr 日志提示 `/install-overlay` | `overlay_install.py` `run_hook()` |
 | 2 | SessionStart 已注入时自动补渲染桥（改 asar 内 renderer 资产） | 每次会话自动补 | **不动**，补桥仅经显式安装命令 | 同上 |
@@ -22,7 +22,7 @@
 | 7 | 自动压缩阈值引擎补丁（改 `<resources>/glm/zcode.cjs`，v1.5.9 新增） | 缺省开（`auto_compact_patch !== false`） | **缺省关**（`=== true`），⚙ 面板或 config 显式开启才打；同时修正了上游注释与代码不一致（上游注释写"默认关"而代码默认开） | `inject-main.cjs` |
 | 8 | 卸载还原 | 剥注入行+剥桥；**引擎补丁永久残留**（备份 `.pre-acthreshold-*` 同样残留） | 新增 `restore_engine_patch()`：当前引擎字节含本插件标记时用首打备份整体还原（防客户端已官方升级时写回旧字节），随后清理备份与哨兵 | `overlay_install.py` `remove` 链 |
 | 9 | 费用预估联网同步（v1.5.10 新增：serve 常驻进程每 12h 拉 models.dev 价表 + USD→CNY 汇率，主源 `open.er-api.com`、兜底 `api.exchangerate.fun`） | 缺省开（`pricing.fetch` 键缺省视为 true） | **缺省关**（`is not False` → `is True`）：费用显示照常（离线用内置烘焙价表，无汇率显示 $ 原值），config `pricing.fetch: true` 才开启在线刷新；⚙ 文案同步改写 | `token_pricing.py` |
-| 10 | macOS 待更新包预注入（v1.5.11 新增：已注入的 loader 监视 Squirrel pending 目录，发现未来版本更新 zip 即改写 zip 内 app.asar 补注入行/渲染桥，更新重启即生效，免二次重启） | 缺省开（`pending_zip_patch` 键缺省视为 true） | **缺省关**（两处门控 `=== false` → `=== true`，watcher 不注册）：仅 macOS 生效，config `pending_zip_patch: true` 显式开启；工具本身保留（`pending_zip_patch.py`，原子/幂等/fail-closed，绝不动 update-info.json） | `inject-main.cjs` |
+| 10 | macOS 待更新包预注入（v1.5.11 引入；**上游 v339（v1.5.17）已整体废除**：预注入改写 zip 会破坏 Squirrel 按官方 Content-Length 拉流导致更新静默失败，issue #298） | ~~缺省开~~ → v339 起机制不存在，改为**按账本清理自愈**（`undo_zip`：只删旧版本插件改写过的坏包让宿主重下官方字节，无记录 zip 绝不碰，恒开且 `pending_zip_patch:false` 不再跳过） | **采纳上游 v339 形态**：清理只触碰本插件自己旧版改写过的文件（账本 sha256 对账），属卸载还原同款纠错而非新注入面；分叉原「缺省关」门控随机制废除而消亡，config 键已从 example 移除 | `pending_zip_patch.py`、`inject-main.cjs` v339 段 |
 | 11 | SessionStart 孤儿待收尾包自愈（v1.5.12 新增：合法 pending 且监控实例锁空闲时自动补拉静默收尾监控，issue #228） | 缺省开（`run_hook` st 分支无条件调用） | **不接线**：`_revive_orphan_pending` 函数保留（附分叉注释）但 `run_hook` 不调用——孤儿待收尾包的恢复路径是重跑 `/install-overlay`（显式链自带 pending 复用与监控拉起） | `overlay_install.py` |
 | 12 | CDP 本机调试口（v1.5.13 新增：loader 顶层给宿主 appendSwitch `--remote-debugging-port=9229`，为实机调试/自动化 QA 用——插件运行时代码零消费方） | 缺省强开（仅 env `ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1` 或用户显式端口可免） | **缺省关**（`cdp_debug_port === true` 才补开）：默认为本机全部进程打开可读控 ZCode 窗口的控制通道不可接受；env 逃生口与用户显式端口优先级保留 | `inject-main.cjs` |
 
@@ -45,14 +45,13 @@
 | `hot_reload` | `true` | `true` | overlay.js 热更新（本地） |
 | `quota_enabled` / `reset_badge_enabled` | `true` | `true` | 额度/重置卡查询（凭据只发各厂商官方域） |
 | `pricing.fetch` | `true` | **`false`** | 费用预估在线同步（每 12h 拉 models.dev 价表与汇率；关闭时用内置价表离线计算，无汇率显示 $） |
-| `pending_zip_patch` | `true` | **`false`** | macOS 待更新包预注入（loader 监视 Squirrel pending zip 并补注入行；仅 macOS，Windows 天然不适用） |
 | `cdp_debug_port` | `true` | **`false`** | CDP 本机调试口 `127.0.0.1:9229`（实机调试/QA 用；插件自身功能不需要它。开启后同机本地进程可读控 ZCode 窗口；env `ZCODE_DISABLE_FIXED_REMOTE_DEBUGGING_PORT=1` 仍优先关闭） |
 
 安装/卸载状态条：`/install-overlay`、`/uninstall-overlay`（clean 分叉中前者是唯一安装入口，
 后者会还原全部客户端修改包括引擎补丁）。旧键 `plugin_auto_install_overlay` 与环境变量
 `ZUSAGE_PLUGIN_AUTO_INSTALL` 在上游 v1.5.7 起已失效，clean 分叉中无对应行为可开关。
 
-## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.16 增量）
+## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.18 增量）
 
 四个独立审计覆盖全部运行时代码（更新/加载器链、凭据与数据流向、安装/补丁链、渲染层载荷
 overlay.js），**均未发现恶意代码**；v1.5.10 增量（token_pricing 费用链、v208 更新红点、
@@ -100,6 +99,22 @@ renderer_bridge HOST_TARGETS 新条目（表外 fail-closed 不变）、overlay 
 **无新增外发端点**（改名探测复用 api.github.com 与 github.com 更新域；model-pull 探测
 发往用户自己配置的供应商域）、无新自动行为越过分叉红线（WorkBuddy 全链在 ZCode 构建里
 惰性；「按库存在性探测」上游自己也做成显式 opt-in）。要点：
+
+**v1.5.17~v1.5.18 增量（2026-11-12 复核，55 提交）**：①**macOS pending zip 预注入整体
+废除**（v339，issue #298 定案：预注入改写 zip 改变文件大小，Squirrel 按官方 Content-Length
+经 MacUpdater 代理拉流即截断 → 更新静默失败回旧版；反转为按账本清理自愈 `undo_zip`——
+只删本插件旧版改写过的坏包、无记录 zip 绝不碰、恒开；分叉立场=采纳，理由见改造表 #10）；
+②**团队套餐 quota 源**（GLM Coding Plan team，配方转写自 magpie MIT）：读本地
+setting.json 供应商族选择 + enc:v2 业务 token 解密（复用既有密钥分发器，本地读），额度
+查询发往 bigmodel.cn / api.z.ai——与既有 quota 查询同性质，用户显式配置 team 源才触发，
+非默认开；③**宿主 3.18.1 适配**：渲染桥 HOST_TARGETS 与引擎补丁 ENGINE_TARGETS 各加
+3.18.1 锚点条目（纯登记，分叉 `auto_compact_patch === true` 门控不变）；④**工作流支持**
+（v332-343：sess_dwf 子代理归类、dwf_actor 显示名、run 卡 chip、后台智能体状态同步）与
+**全部项目聚合**（v331 `_all_projects_usage`，挂 `_cached_project` 水位缓存）、#294 陈旧
+dataBaseDir 两库仲裁、#307 store 缓存承诺、#309 心跳免深拷贝、#314 逐问速率 db_path 覆盖、
+#321 诊断计数、#341 子代理回调修复——全部纯本地读/渲染修复。结论：
+**无新增默认开行为面、无新外发端点**（团队套餐端点属用户显式配置的查询域），
+改造表维持 12 项（第 10 项语义随上游 v339 重写）。
 
 - **网络出口全量枚举，无陌生主机**：GitHub/GitCode（更新渠道，含资产 CDN：
   release-assets/objects.githubusercontent.com、file-cdn.gitcode.com、api.gitcode.com）+
@@ -250,6 +265,19 @@ renderer_bridge HOST_TARGETS 新条目（表外 fail-closed 不变）、overlay 
   静默换成上游正文（本轮首跑即误用，靠后续冲突里 HEAD 侧出现上游横幅文案检出，
   `git rebase --abort` 后重来）。版本对齐提交顺带清掉上游 v1.5.15 已删除的 Web 旁挂版
   全部文档引用（README×3 各 3 处）并把插件 README 新增 ByteRax 文档链接重定向到分叉。
+  v1.5.17~v1.5.18 rebase 实录（2026-11-12）：14 个分叉提交（13 + v305）一次重放
+  （基线 1648b15 → 2219bad），4 个 stop：①clean 分叉 stop（config.example + 两 manifest，
+  --theirs）；②v1.5.10 跟进 stop（overlay 三件，--theirs——**事后核查发现该整文件取侧抹掉
+  了上游 v1.5.17/18 的 overlay 改动（-790 行），已按 §五先例修复**：shard 取 v1.5.18 形态
+  重放分叉三段门控文案（zu-cost-enable/zu-ac-enable/zu-auto-update），build_overlay 重建后
+  overlay.js 与上游仅差这三段）；③v1.5.11 跟进 stop（pending-zip 三件，**--ours**——上游
+  v339 已废除整个机制，分叉门控依附代码不复存在，该 stop 在 inject-main 侧实质丢弃，
+  版本对齐部分自动并入）；④v305 stop（zusage ×3 手动合并：`_sub_agent_tasks` 头部
+  astamp（dwf_actor 失效维度）× v305 legacy/dbkey 保护两者全保留；sub_gen SQL 版与
+  `_scope_models_cost` 吸收上游 `query_source in ('subagent','workflow_child')`；
+  `_proj_untouched` 加单元素键豁免——v331 `_ALLPROJ_CACHE_KEY` 非三元组，按项目探测放行
+  会错误续用全局聚合）。上游 workflow_child/tps_out/tps_gen/_all_projects_usage/dwf_actor
+  全部并入 v305 增量架构。
   v1.5.16 rebase 实录（2026-11-11）：13 个分叉提交重放（基线 d24ca3a → 1648b15），
   冲突仅初始 clean 提交（README.md + 两 manifest）与 redirect 提交（README.en/zh-CN）
   两处——分叉改写文件一律取 `--theirs`（§五教训执行），其余 11 个提交零冲突自动并入；
