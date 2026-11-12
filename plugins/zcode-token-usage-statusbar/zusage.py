@@ -524,6 +524,13 @@ _SPEED_HISTORY_TTL_MS = 2000      # 2s 短缓存（常驻泵 1.5s 拉一次，�
 _SPEED_HISTORY_STALE_MS = 10 * 60 * 1000
 _SPEED_CACHE = {}                 # 独立缓存：不与 _cached_agg 的 scan/today 共用上限 8 的 _AGG_CACHE
 _SPEED_WM = {}                    # 轮表缓存的 model_usage 水位（TTL 过期后水位未变续用，见 _WM_MAX_AGE_MS）
+# v305 速度轮表增量维护状态：轮对象保留（原始键形态，出帧前副本化）+ 增量代次。
+# 保留上限 8000 > _SPEED_HISTORY_MAX_TURNS=6000：防止正常轮转把仍会被复用的轮挤出保留集。
+_SPEED_TURNS_KEEP = {}
+_SPEED_DELTA_STATE = {}
+_SPEED_KEEP_MAX_TURNS = 8000
+_SCAN_DELTA_STATE = {}   # v305 scan 增量消费状态（代次）+ 上次全量结果的 dict 形态
+_SCAN_ROWS_KEEP = {}
 
 
 _AGG_TTL_MS = 2000   # 聚合短缓存：今日合计/会话池是慢变量，2s 陈旧无感；泵 1.5s 拉一次省约一半全表聚合
@@ -572,6 +579,128 @@ class _WmFn:
         return self.fn()
 
 
+# ---------- v305 增量维护基座：rowid 水位 + 运行中行监视 + 代次账本 ----------
+# 大库（GB 级）流式期间每帧全量聚合是 serve 常驻进程的 CPU 大头：扫描/今日三键/速度轮表/
+# 项目聚合的 fn 内部改为「增量应用」。基座按库身份维护一份共享状态：
+#   wm     —— 已应用到哪个 rowid（PK 范围扫 rowid > wm 只触新行，毫秒级）；
+#   watch  —— 交付时未 completed 的行（宿主若先插运行行、完成时 UPDATE 状态，rowid 不动，
+#             水位看不见翻转；按 rowid PK 回查监视行即可当帧捕获，监视行为空时零开销）；
+#   log    —— 代次账本 [(gen, new_rows, flip_rows)]，各消费方自记已应用代次，只补差额，
+#             允许同一帧内多个消费方先后取用同一批行而不重复计数。
+# 正确性契约与既有水位缓存一致（specs/perf-lag-reduction.md §8）：宿主完成请求才一次性
+# INSERT 时 watch 恒空、增量零陈旧；先插运行行再 UPDATE 完成的形态下，翻转经 watch 当帧
+# 可见。兜底与 _wm_alive 同款：状态超过 _WM_MAX_AGE_MS 未整建、或 max(rowid) 收缩
+# （行被删除/VACUUM 重排）时置 need_full，消费方整体重建自愈。
+_MU_STATE = {}
+_MU_LOG_MAX = 32
+_MU_DELTA_COLS = ("rowid, session_id, turn_id, query_source, status, completed_at,"
+                  " started_at, first_token_at, duration_ms, time_to_first_token_ms,"
+                  " input_tokens, output_tokens, reasoning_tokens, cache_read_input_tokens,"
+                  " cache_creation_input_tokens, computed_total_tokens, tool_call_count,"
+                  " retry_count, provider_id, model_id")
+
+
+def _mu_advance(con):
+    """推进共享增量状态，返回 (dbkey, gen, seeded)。seeded=True 表示本轮发生过
+    首见/兜底整建/状态作废——所有消费方必须整体重建（账本以空代次起点重新记账）。
+    任何异常（含最小桩连接形态）都降级为整体重建，与 _usage_watermark 的宽容契约
+    同款：增量是优化，不是必需。"""
+    try:
+        return _mu_advance_inner(con)
+    except Exception:
+        return None, 0, True
+
+
+def _mu_advance_inner(con):
+    dbkey = _db_cache_key(con)
+    if dbkey is None:
+        return None, 0, True
+    now = time.monotonic()
+    st = _MU_STATE.get(dbkey)
+    if st is None:
+        st = _MU_STATE[dbkey] = {"wm": None, "built": now, "gen": 0, "log": [], "watch": {}}
+    if st["wm"] is None or now - st["built"] > _WM_MAX_AGE_MS / 1000.0:
+        # 首见 / 兜底整建：拉起水位、账本清零，消费方各自整体重建（本轮不产行）
+        try:
+            st["wm"] = con.execute("select max(rowid) from model_usage").fetchone()[0] or 0
+        except sqlite3.Error:
+            st["wm"] = None
+            return dbkey, st["gen"], True
+        st["built"] = now
+        st["gen"] += 1
+        st["log"] = [(st["gen"], [], [])]
+        st["watch"] = {}
+        return dbkey, st["gen"], True
+    try:
+        rows = con.execute(
+            f"select {_MU_DELTA_COLS} from model_usage where rowid > ? order by rowid",
+            (st["wm"],)).fetchall()
+        cur_max = con.execute("select max(rowid) from model_usage").fetchone()[0] or 0
+    except sqlite3.Error:
+        st["wm"] = None   # 查询异常：状态作废，消费方整体重建
+        return dbkey, st["gen"], True
+    if cur_max < st["wm"]:
+        # 行删除导致的 rowid 收缩：增量不可靠，触发整体重建
+        st["wm"] = None
+        return dbkey, st["gen"], True
+    flips = []
+    if st["watch"]:
+        ids = list(st["watch"])
+        for i in range(0, len(ids), 128):
+            part = ids[i:i + 128]
+            qm = ",".join("?" * len(part))
+            try:
+                for r in con.execute(
+                        f"select {_MU_DELTA_COLS} from model_usage where rowid in ({qm})", part):
+                    if r["completed_at"]:
+                        flips.append(r)
+                        st["watch"].pop(r["rowid"], None)
+                    else:
+                        st["watch"][r["rowid"]] = (r["session_id"], r["turn_id"])
+            except sqlite3.Error:
+                st["wm"] = None
+                return dbkey, st["gen"], True
+    new = []
+    for r in rows:
+        if r["completed_at"]:
+            new.append(r)
+        else:
+            st["watch"][r["rowid"]] = (r["session_id"], r["turn_id"])
+    if len(st["watch"]) > 256:   # 崩溃残留的未完成行不无限累积：按 rowid 保留最近一批
+        for rid in sorted(st["watch"])[:-256]:
+            st["watch"].pop(rid, None)
+    if rows or flips:
+        st["wm"] = rows[-1]["rowid"] if rows else st["wm"]
+        st["gen"] += 1
+        st["log"].append((st["gen"], new, flips))
+        del st["log"][:-_MU_LOG_MAX]
+    return dbkey, st["gen"], False
+
+
+def _mu_take(con, consumer):
+    """消费方领取自上次应用以来的全部新行/翻转行。返回 (need_full, new, flip)：
+    need_full=True 表示必须整体重建（首见/兜底/收缩/落后超过账本容量）；
+    dbkey 为 None（内存库/桩连接）时同样整体重建，走原有全量路径。"""
+    dbkey, gen, seeded = _mu_advance(con)
+    if dbkey is None:
+        return True, [], []
+    state = consumer.get(dbkey)
+    if state is None or seeded:
+        consumer[dbkey] = gen
+        return True, [], []
+    if gen == state:
+        return False, [], []
+    entries = [e for e in _MU_STATE[dbkey]["log"] if e[0] > state]
+    if not entries or entries[0][0] != state + 1:
+        # 账本断代（消费方落后太多）：整体重建自愈
+        consumer[dbkey] = gen
+        return True, [], []
+    new = [r for _, n, _ in entries for r in n]
+    flip = [r for _, _, f in entries for r in f]
+    consumer[dbkey] = gen
+    return False, new, flip
+
+
 def _cached_agg(key, fn):
     con = getattr(fn, "wm_con", None)
     now = int(time.time() * 1000)
@@ -596,6 +725,7 @@ def _cached_agg(key, fn):
 
 _PROJ_CACHE = {}
 _PROJ_WM = {}
+_PROJ_PWD = {}   # v305 项目范围探测水位：full 键 → 构建时的 max(rowid)；水位变了先探测再决定重算
 
 
 def _db_cache_key(con):
@@ -627,7 +757,12 @@ def _cached_project(dbkey, key, fn, con=None):
     """v177：_project_usage 专用缓存，键挂库文件身份 + (project_id, 目录键, with_models)——常驻泵
     跨请求复用连接时吃到 2s TTL 的跨帧免重扫（实测无缓存大库单项目聚合 ~40ms，池内多行
     一帧可达数百 ms）。独立于 _AGG_CACHE：项目键随使用增长，混进共享缓存会把它顶过上限
-    触发整体 clear、连带丢掉 scan/today 热条目。"""
+    触发整体 clear、连带丢掉 scan/today 热条目。
+    v305：水位已变时不再无条件整扫——先按项目成员集做 rowid 范围探测（毫秒级），
+    新行不在本项目内则续用旧值。全局水位对多项目帧是过度失效（一处活跃击穿全部
+    项目键），探测按项目粒度放行；命中口径与 run() 的成员枚举同源（_project_member_ids）。
+    翻转（先插运行行后 UPDATE 完成）经 rowid 探测不可见：与 _wm_alive 同款受
+    _WM_MAX_AGE_MS 兜底约束，不超过既有陈旧契约。"""
     now = int(time.time() * 1000)
     full = (dbkey, key)
     hit = _PROJ_CACHE.get(full)
@@ -636,16 +771,21 @@ def _cached_project(dbkey, key, fn, con=None):
             return hit[1]
         if _wm_alive(_PROJ_WM, full, hit, con, now):   # 流式期间 model_usage 恒定：水位未变续用（见 _WM_MAX_AGE_MS）
             return hit[1]
+        if con is not None and now - hit[0] < _WM_MAX_AGE_MS and _proj_untouched(con, full):
+            return hit[1]
     wm = _usage_watermark(con) if con is not None else None
     val = fn()
     if len(_PROJ_CACHE) > 64:
         _PROJ_CACHE.clear()   # 保险防膨胀：清空只损失缓存，不损正确性
         _PROJ_WM.clear()
+        _PROJ_PWD.clear()
     _PROJ_CACHE[full] = (now, val)
     if wm is None:
         _PROJ_WM.pop(full, None)
+        _PROJ_PWD.pop(full, None)
     else:
         _PROJ_WM[full] = wm
+        _PROJ_PWD[full] = wm[1]   # 探测基线 = 本次构建时已见的 max(rowid)
     return val
 
 
@@ -680,18 +820,63 @@ def _cached_session(con, sid, kind, fn):
     else:
         _SESS_WM[full] = wm
     return val
+def _proj_untouched(con, full):
+    """v305：水位变了，但新行是否落在本项目成员集内？成员枚举与 run() 同源
+    （_project_member_ids，含目录过滤与派生会话）。无新行命中则推进探测水位并
+    返回 True（续用缓存）；任何查询异常返回 False（宁可重算，不冒陈旧风险）。
+    v331 全项目聚合键（_ALLPROJ_CACHE_KEY，单元素形态）恒重算：任何项目的新行
+    都改变全局聚合，探测按单项目成员集放行会错误续用（保持上游「仅水位变化帧
+    重算」语义）。"""
+    pwd = _PROJ_PWD.get(full)
+    if pwd is None or len(full[1]) != 3:
+        return False
+    project_id, pkey, _with = full[1]
+    try:
+        ids = _project_member_ids(con, project_id, pkey)
+        for i in range(0, len(ids), 500):
+            part = ids[i:i + 500]
+            qm = ",".join("?" * len(part))
+            if con.execute(
+                    f"select 1 from model_usage where rowid > ? and session_id in ({qm}) limit 1",
+                    (pwd, *part)).fetchone():
+                return False
+        cur = con.execute("select max(rowid) from model_usage").fetchone()[0] or 0
+        # 探测覆盖区间 (pwd, cur] 无命中：推进基线安全（该区间内本项目无新行）
+        _PROJ_PWD[full] = cur
+        return True
+    except sqlite3.Error:
+        return False
 
 
 def _scan_session_ids(con):
     """全库 session_id → max(completed_at) 一次分组扫描（731MB 库 ~55ms）。
     最新会话与 recent 池原先各自独立做同样的全表 group by（3 次 118ms），
-    合并为一次扫描并挂 2s TTL。"""
+    合并为一次扫描并挂 2s TTL。
+    v305 增量维护：TTL 过期且水位已变时不再整表重扫——按 rowid 只取新完成行，
+    合并进上次结果（session_id → max 值单调不降，取 max 即可）。翻转（先插运行
+    行后 UPDATE 完成）经运行中行监视当帧并入；账本断代/首见退回全量扫描。"""
     def run():
         # coalesce：崩溃残留的未完成行 completed_at 为 NULL，全会话皆 NULL 时
         # max() 返回 NULL，下游 max()/sorted() 比较会 TypeError 击穿整帧快照。
-        return con.execute(
+        need_full, new, flip = _mu_take(con, _SCAN_DELTA_STATE)
+        if not need_full:
+            prev = _SCAN_ROWS_KEEP.get("v")
+            if prev is not None:
+                if not (new or flip):
+                    return prev
+                merged = dict(prev)
+                for r in new + flip:
+                    s, c = r["session_id"], r["completed_at"] or 0
+                    if merged.get(s, 0) < c:
+                        merged[s] = c
+                rows = [(s, c) for s, c in merged.items()]
+                _SCAN_ROWS_KEEP["v"] = dict(merged)
+                return rows
+        rows = con.execute(
             """select session_id, max(coalesce(completed_at, 0)) as m
                from model_usage group by session_id""").fetchall()
+        _SCAN_ROWS_KEEP["v"] = {r[0]: r[1] for r in rows}
+        return rows
     return _cached_agg("scan", _WmFn(run, con))
 
 
@@ -740,6 +925,25 @@ def _canon_model_name(existing, candidate):
     return existing
 
 
+def _project_member_ids(con, project_id, pkey):
+    """v305：项目成员会话 id 全集（主会话 + 派生会话），run() 聚合与 _proj_untouched
+    探测同源调用——两处口径由同一实现锁定，探测漏项即聚合漏项（探测只会更保守）。
+    issue #248 目录过滤在 Python 侧做（尾分隔/大小写归一无法可靠下推 SQL）；
+    锚点为空（pkey=""）不过滤。"""
+    rows = con.execute(
+        """select id, directory from session where project_id=?
+           and parent_id is null and substr(id,1,?)!='sess_subagent'""",
+        (project_id, _SUB_PREFIX_LEN)).fetchall()
+    mains = [r[0] for r in rows if not pkey or _norm_path_key(r[1]) == pkey]
+    all_ids = list(mains)
+    for i in range(0, len(mains), 500):
+        part = mains[i:i + 500]
+        qm = ",".join("?" * len(part))
+        all_ids += [r[0] for r in con.execute(
+            f"select id from session where parent_id in ({qm})", part)]
+    return all_ids
+
+
 def _project_usage(con, sid, with_models=False):
     """项目累计（v159）：当前会话所属项目（session.project_id，与宿主 --continue 同一
     项目身份）下全部会话的 completed 用量聚合，口径与 session_usage 一致；计入主会话与
@@ -768,20 +972,7 @@ def _project_usage(con, sid, with_models=False):
     pkey = _norm_path_key(pdir)
 
     def run():
-        # issue #248：目录过滤在 Python 侧做（尾分隔/大小写归一无法可靠下推 SQL）；
-        # 一次取回 id+directory，量级=项目主会话数。锚点为空（pkey=""）不过滤。
-        rows = con.execute(
-            """select id, directory from session where project_id=?
-               and parent_id is null and substr(id,1,?)!='sess_subagent'""",
-            (prow[0], _SUB_PREFIX_LEN)).fetchall()
-        mains = [r[0] for r in rows
-                 if not pkey or _norm_path_key(r[1]) == pkey]
-        all_ids = list(mains)
-        for i in range(0, len(mains), 500):
-            part = mains[i:i + 500]
-            qm = ",".join("?" * len(part))
-            all_ids += [r[0] for r in con.execute(
-                f"select id from session where parent_id in ({qm})", part)]
+        all_ids = _project_member_ids(con, prow[0], pkey)
         if not all_ids:
             return None
         sessions = turns = requests = input_t = output_t = reasoning = 0
@@ -837,10 +1028,10 @@ def _project_usage(con, sid, with_models=False):
             dur_pos_n += r[15] or 0
             ttft_pos_sum += r[16] or 0
             ttft_pos_n += r[17] or 0
-            tr = _turn_rate(con.execute(
-                f"""select output_tokens, first_token_at, completed_at, started_at, reasoning_tokens, model_id, provider_id
-                    from model_usage where status='completed' and (query_source is null or query_source='main_turn')
-                    and session_id in ({qm})""", part).fetchall(), covers)
+            tr = _turn_rate_sql(
+                con,
+                "status='completed' and (query_source is null or query_source='main_turn')"
+                f" and session_id in ({qm})", part, covers)
             rated_acc += tr["rated_output"]
             gen_acc += tr["gen_ms"]
             # v202：模型分组查询从 with_models 分支提为恒跑（费用与模型明细同源一条 SQL），
@@ -1154,6 +1345,120 @@ def _today_usage(con, start_ms, end_ms):
            from model_usage where status='completed' and completed_at between ? and ?""",
         (start_ms, end_ms),
     ).fetchone()
+
+
+# v305 今日窗口行集增量状态：dbkey → {"day": start_ms, "rows": {rowid: row}}。
+# 今日行 completed_at 落定后不再变（不再离开窗口），增量只做并入；跨天（day 键变）
+# 或账本断代时整体重取。三派生消费（16 列今日元组/均速/模型费用明细）共享同一行集。
+_TODAY_STATE = {}
+_TODAY_DELTA_STATE = {}
+
+
+def _today_rows(con, start_ms, end_ms):
+    """v305：今日完成行集（增量维护）。水位已变时按代次账本并入新行/翻转行，
+    不再整扫（今日窗口 ~90ms 扫描 × 泵频次是活跃期固定开销）。行集形状与增量
+    账本同源（_MU_DELTA_COLS）。任何桩形态/查询异常按空集降级（消费端口径同
+    v301「最小桩连接按 0 降级」契约，整帧不拖垮）。"""
+    try:
+        need_full, new, flip = _mu_take(con, _TODAY_DELTA_STATE)
+        dbkey = _db_cache_key(con)
+    except Exception:
+        return []
+    st = _TODAY_STATE.get(dbkey) if dbkey is not None else None
+    if st is not None and st["day"] != start_ms:
+        st = None
+    if need_full or st is None:
+        try:
+            rows = {r["rowid"]: r for r in con.execute(
+                f"""select {_MU_DELTA_COLS} from model_usage
+                    where status='completed' and completed_at between ? and ?""",
+                (start_ms, end_ms))}
+        except Exception:
+            rows = {}
+        if dbkey is not None:
+            _TODAY_STATE[dbkey] = {"day": start_ms, "rows": rows}
+        return list(rows.values())
+    for r in new + flip:
+        c = r["completed_at"]
+        if c is not None and start_ms <= c < end_ms and (r["status"] or "") == "completed":
+            st["rows"][r["rowid"]] = r
+    return list(st["rows"].values())
+
+
+def _today_tuple16(rows):
+    """v305：_today_usage 的行集聚合版——16 列口径逐列对齐 SQL（count/Σcoalesce/
+    min/max 忽略 NULL、COUNT(DISTINCT) 不计 NULL、>0 样本过滤的均值仅 main_turn）。"""
+    n = len(rows)
+    sums = [0] * 8   # input output cache_read total duration reasoning retry cache_write
+    for r in rows:
+        sums[0] += r["input_tokens"] or 0
+        sums[1] += r["output_tokens"] or 0
+        sums[2] += r["cache_read_input_tokens"] or 0
+        sums[3] += r["computed_total_tokens"] or 0
+        sums[4] += r["duration_ms"] or 0
+        sums[5] += r["reasoning_tokens"] or 0
+        sums[6] += r["retry_count"] or 0
+        sums[7] += r["cache_creation_input_tokens"] or 0
+    started = [r["started_at"] for r in rows if r["started_at"] is not None]
+    ended = [r["completed_at"] for r in rows if r["completed_at"] is not None]
+    turns = {r["turn_id"] for r in rows if r["turn_id"] is not None}
+    dur_v = [r["duration_ms"] for r in rows
+             if (r["duration_ms"] or 0) > 0
+             and (r["query_source"] is None or r["query_source"] == "main_turn")]
+    ttft_v = [r["time_to_first_token_ms"] for r in rows
+              if (r["time_to_first_token_ms"] or 0) > 0
+              and (r["query_source"] is None or r["query_source"] == "main_turn")]
+    sids = {r["session_id"] for r in rows}
+    tools = sum(r["tool_call_count"] or 0 for r in rows)
+    avg = lambda v: (sum(v) / len(v)) if v else None
+    return (n, sums[0], sums[1], sums[2], sums[3], sums[4], sums[5], sums[6], sums[7],
+            min(started) if started else None, max(ended) if ended else None,
+            len(turns), avg(dur_v), avg(ttft_v), len(sids), tools)
+
+
+def _today_detail_rows(rows):
+    """v305：_scope_models_cost("completed_at between ...") 的行集版——今日模型明细
+    与预估费用从增量行集直接分组计价，不再按窗口整扫。口径与 _scope_models_cost
+    一致（含失败时 models/cost 双省略）。"""
+    if _pricing is None:
+        return {"cost": None, "models": []}
+    groups = {}
+    model_names = {}
+    raw_groups = []
+    for r in rows:
+        raw_m = r["model_id"] or ""
+        m_key = raw_m.lower()
+        model_names[m_key] = _canon_model_name(model_names.get(m_key), raw_m)
+        g = groups.setdefault((m_key, r["provider_id"] or ""),
+                              [0, 0, 0, 0, 0, 0, 0])
+        g[0] += 1
+        g[1] += r["computed_total_tokens"] or 0
+        g[2] += r["input_tokens"] or 0
+        g[3] += r["output_tokens"] or 0
+        g[4] += r["cache_read_input_tokens"] or 0
+        g[5] += r["cache_creation_input_tokens"] or 0
+    models_acc = {}
+    for (m_key, prov), g in groups.items():
+        raw_m = model_names[m_key]
+        raw_groups.append((raw_m, prov, g[2], g[3], g[4], g[5]))
+        a = models_acc.setdefault(m_key, [0, 0])
+        a[0] += g[0]
+        a[1] += g[1]
+    try:
+        canon = [(model_names[(m or "").lower()], prov, inp, out, cr, cw)
+                 for m, prov, inp, out, cr, cw in raw_groups]
+        cost, per = _pricing.merge_model_costs(canon)
+        prov_of = {}
+        for model, prov, *_ in canon:
+            prov_of.setdefault(model, prov)
+        models = [{"model": model_names[k], "requests": v[0], "total": v[1],
+                   "cost_usd": per.get(model_names[k], 0.0),
+                   "rates": _model_rates(model_names[k], prov_of.get(model_names[k], "")).get("rates")}
+                  for k, v in models_acc.items()]
+        models.sort(key=lambda m: -m["total"])
+    except Exception:
+        return {"cost": None, "models": []}
+    return {"cost": cost, "models": models}
 
 
 def daily_usage(con, days):
@@ -1498,16 +1803,79 @@ def _prompt_matches(title, prompt):
 # 任务名解析缓存（serve 常驻进程内）：like 扫描父会话全部 part 的 data（本会话可达
 # 2456 行大 JSON，实测 29ms/次，泵 1.5s 拉一次全付）。失效键 = 父会话 part 的
 # 行数+最新 time_updated（索引聚合，<1ms）；普通消息 part 新增也会失效，宁多算不漏算。
+# v305：失效后不再整段重扫——part 追加为主，按 time_updated >= 上次扫描水位只取
+# 新增/更新过的 part（data blob 只为这几行读溢出页），解析结果按 part id 累积在
+# 缓存里，任务映射从累积集原样重建（回执关联 + 唯一前缀兜底两段逻辑不变）。
+# 行数收缩（part 被删）时增量不可靠，退回全量扫描自愈。dbkey 一并入缓存值，
+# 防测试夹具跨库同 sid 同戳互串。
 _TASK_CACHE = {}
 _TASK_AT = {}                  # sid → 上次实际扫描时刻（规则 15 的最小重扫间隔判定）
 _TASK_RESCAN_MS = 3000         # 快照热路径最小重扫间隔：任务名最长陈旧 3s
 
 
-def _sub_item(con, r, sub_tasks, sub_gen, sub_timing=None):
+def _sub_costs_batch(con, sids):
+    """v305：子代理列表逐项费用/模型明细的批量版——_sub_item 原先每项一条分组查询，
+    十几个子代理就是十几条扫描；改为一次 IN 分组，Python 侧按 sid 拆分后走与
+    _scope_models_cost 同款计价/命名归并（口径逐条对齐，含失败时两项一并省略）。
+    返回 ({sid: cost}, {sid: models})；价表缺失/查询失败为 ({}, {})。"""
+    if _pricing is None or not sids:
+        return {}, {}
+    raw = {}
+    try:
+        for i in range(0, len(sids), 400):
+            part = sids[i:i + 400]
+            qm = ",".join("?" * len(part))
+            for r in con.execute(
+                    f"""select session_id, model_id, provider_id, count(*),
+                               coalesce(sum(computed_total_tokens),0), coalesce(sum(input_tokens),0),
+                               coalesce(sum(output_tokens),0), coalesce(sum(cache_read_input_tokens),0),
+                               coalesce(sum(cache_creation_input_tokens),0)
+                        from model_usage where status='completed' and session_id in ({qm})
+                        group by session_id, model_id, provider_id""", part):
+                raw.setdefault(r[0], []).append(r[1:])
+    except sqlite3.Error:
+        return {}, {}
+    costs, models_out = {}, {}
+    for sid, rows in raw.items():
+        try:
+            model_names = {}
+            acc = {}
+            groups = []
+            for mm in rows:
+                raw_m = mm[0] or ""
+                m_key = raw_m.lower()
+                model_names[m_key] = _canon_model_name(model_names.get(m_key), raw_m)
+                a = acc.setdefault(m_key, [0, 0])
+                a[0] += mm[2]
+                a[1] += mm[3]
+                groups.append((raw_m, mm[1] or "", mm[4], mm[5], mm[6], mm[7]))
+            canon = [(model_names[(m or "").lower()], prov, inp, out, cr, cw)
+                     for m, prov, inp, out, cr, cw in groups]
+            total, per = _pricing.merge_model_costs(canon)
+            prov_of = {}
+            for model, prov, *_ in canon:
+                prov_of.setdefault(model, prov)
+            models = [{"model": model_names[k], "requests": v[0], "total": v[1],
+                       "cost_usd": per.get(model_names[k], 0.0),
+                       "rates": _model_rates(model_names[k], prov_of.get(model_names[k], "")).get("rates")}
+                      for k, v in acc.items()]
+            models.sort(key=lambda m: -m["total"])
+        except Exception:
+            continue   # 单个子会话计价失败：两项一并省略（_scope_models_cost 同款口径）
+        if total is not None:
+            costs[sid] = total
+        if models:
+            models_out[sid] = models
+    return costs, models_out
+
+
+def _sub_item(con, r, sub_tasks, sub_gen, sub_timing=None, batch_cost=None, batch_models=None):
     """sub.list 单项（v217 统一浮层任务页）：基础聚合 + 可选每任务模型明细/费用。
     模型明细按子会话 id 分组查询（与 _session_models_cost 同构口径）；价表缺失
-    或分组为空时字段省略，消费端按缺省处理不造零值。"""
-    t = sub_timing.get(r[0]) or [0, 0, 0, 0, 0, set()]
+    或分组为空时字段省略，消费端按缺省处理不造零值。
+    v305：费用/明细改由 _sub_costs_batch 一次批量算好传入（batch_cost/batch_models），
+    未传时退回原逐项查询（远端/旧调用方兼容）。"""
+    t = sub_timing.get(r[0]) or [0, 0, 0, 0, 0, 0]   # v305：第 6 槽为轮数计数（SQL 聚合）
     item = {"sid": r[0], "agent": r[1], "title": r[2], "task": sub_tasks.get(r[0], ""),
             "requests": r[3], "total": r[4],
             "input": r[5], "output": r[6], "cache_read": r[7], "reasoning": r[8],
@@ -1522,9 +1890,13 @@ def _sub_item(con, r, sub_tasks, sub_gen, sub_timing=None):
             "avg_duration_ms": round(t[1] / t[2]) if t[2] else 0,
             "avg_ttft_ms": round(t[3] / t[4]) if t[4] else 0,
             "duration_ms": t[0],
-            "turns": len(t[5]),
+            "turns": t[5],
             "active": bool(r[10] and int(time.time() * 1000) - r[10] < 30000)}
-    m1, c1 = _scope_models_cost(con, "session_id=?", (r[0],))
+    if batch_cost is not None and batch_models is not None:
+        c1 = batch_cost.get(r[0])
+        m1 = batch_models.get(r[0])
+    else:
+        m1, c1 = _scope_models_cost(con, "session_id=?", (r[0],))
     if c1 is not None:
         item["cost_usd"] = c1
     if m1:
@@ -1533,49 +1905,91 @@ def _sub_item(con, r, sub_tasks, sub_gen, sub_timing=None):
 
 
 def _sub_agent_tasks(con, sid):
-    stamp = con.execute(
-        "select count(*), coalesce(max(time_updated),0) from part where session_id=?", (sid,)
-    ).fetchone()
-    # dwf_actor 新增/改名不动 part：工作流运行中动态创建 actor 且其 ask 完成落库时，
-    # 父会话可能无新 part 行——失效键补 dwf_actor 维度（greatest 覆盖纯改名只动
-    # time_updated 的形态），旧库无表按 0（同款 fail-closed）。
+    legacy = False
     try:
-        astamp = con.execute(
-            """select coalesce(max(max(a.time_created, coalesce(a.time_updated,0))),0)
-               from dwf_actor a join session s2 on a.session_id = s2.id where s2.parent_id=?""",
-            (sid,)).fetchone()[0]
+        stamp = con.execute(
+            "select count(*), coalesce(max(time_updated),0) from part where session_id=?", (sid,)
+        ).fetchone()
+        # dwf_actor 新增/改名不动 part：工作流运行中动态创建 actor 且其 ask 完成落库时，
+        # 父会话可能无新 part 行——失效键补 dwf_actor 维度（greatest 覆盖纯改名只动
+        # time_updated 的形态），旧库无表按 0（同款 fail-closed）。
+        try:
+            astamp = con.execute(
+                """select coalesce(max(max(a.time_created, coalesce(a.time_updated,0))),0)
+                   from dwf_actor a join session s2 on a.session_id = s2.id where s2.parent_id=?""",
+                (sid,)).fetchone()[0]
+        except sqlite3.Error:
+            astamp = 0
+        key = (stamp[0], stamp[1], astamp)
     except sqlite3.Error:
-        astamp = 0
-    key = (stamp[0], stamp[1], astamp)
+        # 旧库无 time_updated 列：无失效戳可挂，退回 v217 全量扫描且不缓存（每帧重扫，
+        # 口径不变；行为上等同更早的直扫实现）
+        legacy = True
+        stamp = None
+        key = None
+    try:
+        dbkey = _db_cache_key(con)
+    except Exception:
+        dbkey = None   # 桩连接形态：不缓存直接算（同 _usage_watermark 宽容契约）
     hit = _TASK_CACHE.get(sid)
-    if hit and hit[0] == key:
-        return hit[1]
+    if hit and hit[0] == key and hit[1] == dbkey:
+        return hit[2]
+    if legacy:
+        agent_parts = {}
+    elif hit and hit[1] == dbkey and stamp[0] >= hit[4]:
+        agent_parts = dict(hit[3])
+    else:
+        agent_parts = {}
+    floor = hit[5] if (not legacy and hit and hit[1] == dbkey and agent_parts) else 0
+    # 只取上次扫描水位之后的 part：流式期间几百毫秒一新增，增量集恒为个位数行；
+    # 回执落盘把 time_updated 推到最新（> floor 恒真），已完成任务的翻转不会漏。
+    if legacy:
+        rows = [(f"legacy_{i}", r[0], r[1], None) for i, r in enumerate(con.execute(
+            """select data, time_created from part
+               where session_id=? and data like '%"tool":"Agent"%' order by time_created""",
+            (sid,),
+        ).fetchall())]
+    else:
+        try:
+            rows = con.execute(
+                """select id, data, time_created, time_updated from part
+                   where session_id=? and time_updated >= ? order by time_created""",
+                (sid, floor),
+            ).fetchall()
+        except sqlite3.Error:
+            # 列漂移（无 id/time_updated 等）：退回 v217 两列全量扫描，且不缓存；
+            # 携带的旧增量集作废（全量重建，不与旧条目叠加）
+            legacy = True
+            agent_parts = {}
+            rows = [(f"legacy_{i}", r[0], r[1], None) for i, r in enumerate(con.execute(
+                """select data, time_created from part
+                   where session_id=? and data like '%"tool":"Agent"%' order by time_created""",
+                    (sid,),
+            ).fetchall())]
+    for prow in rows:
+        try:
+            o = json.loads(prow[1])
+        except Exception:
+            continue   # 非 JSON/解析失败：维持「跳过该条」语义（不清旧解析结果）
+        if (o.get("type") or "") != "tool" or (o.get("tool") or "") != "Agent":
+            continue
+        st = o.get("state") or {}
+        inp = st.get("input") or {}
+        desc = str(inp.get("description") or "").strip()
+        if not desc:
+            continue
+        agent_parts[prow[0]] = (desc, str(inp.get("prompt") or "").strip(),
+                                str(st.get("output") or ""))
     sub_rows_titles = {r[0]: r[1] for r in con.execute(
         "select id, title from session where parent_id=?", (sid,))}
-    agent_parts = []
-    for prow in con.execute(
-        """select data, time_created from part
-           where session_id=? and data like '%"tool":"Agent"%' order by time_created""",
-        (sid,),
-    ):
-        try:
-            o = json.loads(prow[0])
-            st = o.get("state") or {}
-            inp = st.get("input") or {}
-            desc = str(inp.get("description") or "").strip()
-            if desc:
-                agent_parts.append((desc, str(inp.get("prompt") or "").strip(),
-                                    str(st.get("output") or "")))
-        except Exception:
-            continue   # part.data 解析失败跳过该条，不影响其余
     tasks = {}
-    for desc, _prompt, out in agent_parts:
-        m = re.search(r"(?:^|\n)agentId:\s*([^\s(]+)", out)
+    for pid_, (desc, _prompt, out) in agent_parts.items():
+        m = re.search(r"(?:^|\n)agentId:\s*([^\ns(]+)", out)
         if m:
             tasks["sess_subagent_" + m.group(1)] = desc
     used = set(tasks)
-    for desc, prompt, out in agent_parts:
-        if re.search(r"(?:^|\n)agentId:\s*([^\s(]+)", out):
+    for pid_, (desc, prompt, out) in agent_parts.items():
+        if re.search(r"(?:^|\n)agentId:\s*([^\ns(]+)", out):
             continue   # 已走回执关联
         cands = [s for s, t in sub_rows_titles.items()
                  if s not in used and _prompt_matches(t, prompt)]
@@ -1598,18 +2012,23 @@ def _sub_agent_tasks(con, sid):
         _TASK_AT.clear()
     _TASK_CACHE[sid] = (key, tasks)
     _TASK_AT[sid] = int(time.time() * 1000)
+    if not legacy and dbkey is not None:
+        _TASK_CACHE[sid] = (key, dbkey, tasks, agent_parts, stamp[0], stamp[1])
     return tasks
 
 
 def _sub_agent_tasks_hot(con, sid):
     """快照热路径包装（specs/perf-lag-reduction.md 规则 15）：part 在流式期间持续新增，
-    _sub_agent_tasks 的失效键每帧失配，正文 LIKE 扫描随帧重复。距上次计算不足
+    _sub_agent_tasks 的失效键每帧失配，正文扫描随帧重复。距上次计算不足
     _TASK_RESCAN_MS 时直接复用上次结果（任务名最长陈旧 3s）；无缓存时才走精确路径。
-    CLI 文本报表仍用 _sub_agent_tasks，不受此节流影响。"""
+    CLI 文本报表仍用 _sub_agent_tasks，不受此节流影响。
+    v305 融合：_TASK_CACHE 值结构为 (key, dbkey, tasks, agent_parts, count, stamp)——
+    tasks 取 hit[2]（上游原结构为 (key, tasks) 取 hit[1]）；增量版本身已把流式期
+    重扫降为个位数新行，此节流作为 3s 兜底与增量正交叠加。"""
     hit = _TASK_CACHE.get(sid)
     at = _TASK_AT.get(sid)
     if hit is not None and at is not None and int(time.time() * 1000) - at < _TASK_RESCAN_MS:
-        return hit[1]
+        return hit[2]
     return _sub_agent_tasks(con, sid)
 
 
@@ -1979,12 +2398,51 @@ def _turn_rate(rows, covers=frozenset()):
             "rated_output": output, "unrated_output": unrated, "gen_ms": duration}
 
 
+def _rated_case_sql(covers, p=""):
+    """v305：构建 (win, rated) 两段 SQL 表达式——_row_gen_ms 口径的 CASE 下推形式。
+    p 为列名前缀（join 查询用 "m."）；win 出现处需按次数补 covers 参数（各调用方
+    以 {p}completed_at - {p}started_at 字面量计数）。"""
+    cov = ",".join("?" * len(covers))
+    win = (f"case when (coalesce({p}reasoning_tokens,0) > 0"
+           f" or instr(lower(coalesce({p}model_id,'')), 'claude') > 0)"
+           f" and {p}started_at > 0 and {p}completed_at > {p}started_at"
+           + (f" and ({p}provider_id is null or {p}provider_id not in ({cov}))" if covers else "")
+           + f" then {p}completed_at - {p}started_at else {p}completed_at - {p}first_token_at end")
+    rated = (f"{p}status='completed' and coalesce({p}output_tokens,0) > 0 and {p}first_token_at > 0"
+             f" and {p}completed_at > {p}first_token_at and {win} >= {_TPS_MIN_GEN_MS}"
+             f" and {win} < {_TPS_MAX_GEN_MS}")
+    return win, rated
+
+
+def _turn_rate_sql(con, where, args, covers=frozenset()):
+    """v305：_turn_rate 的 SQL 聚合版——大库每帧把全会话/全项目/今日的行整段捞回
+    Python 逐行算窗是 serve 的 CPU 大头之一；窗口判定（_row_gen_ms 口径）下推成
+    CASE 表达式在库内一次求和，行不再过 Python。口径逐条对齐 _row_gen_ms：
+    first_token_at 缺失/为 0/非正窗口不可信；含思考段或 Claude 系默认窗口前移到
+    started_at（provider 在 covers 时保持首字起算）；有效性带 [_TPS_MIN_GEN_MS,
+    _TPS_MAX_GEN_MS)。异常照原样上抛（调用方原有的 sqlite3.Error 捕获口径不变）。
+    covers 参数按 win 在 SQL 中的出现次数自动补齐（以窗口表达式特征串计数，改写
+    查询体不需要手工同步参数个数）。"""
+    win, rated = _rated_case_sql(covers)
+    q = (f"select coalesce(sum(rout),0), coalesce(sum(rgen),0), coalesce(sum(uout),0) from ("
+         f"select case when {rated} then coalesce(output_tokens,0) else 0 end as rout,"
+         f" case when {rated} then {win} else 0 end as rgen,"
+         f" case when status='completed' and coalesce(({rated}) = 1, 0) = 0 then coalesce(output_tokens,0) else 0 end as uout"
+         f" from model_usage where {where})")
+    # sqlite 按文本顺序绑定：SELECT 内 CASE 的 covers ? 在 WHERE 的 args ? 之前
+    cargs = list(covers) * q.count("completed_at - started_at") + list(args)
+    r = con.execute(q, cargs).fetchone()
+    out, gen, unr = r[0] or 0, r[1] or 0, r[2] or 0
+    return {"tps": round(out / (gen / 1000), 1) if gen else 0,
+            "rated_output": out, "unrated_output": unr, "gen_ms": gen}
+
+
 def _rated_tps(tokens, gen_ms):
     """加权平均 t/s：Σ有效 output ÷ Σ有效生成窗口；窗口为 0（无有效样本）时返回 0。"""
     return round(tokens / (gen_ms / 1000), 1) if gen_ms else 0
 
 
-def _speed_turns(con, session_ids, covers):
+def _speed_turns(con, session_ids, covers, prev_turns=None, delta=None):
     """v253：按会话集合取真实已完成 main_turn 轮，按轮完成时间升序。
 
     每行 = 一次用户提问对应的完整模型轮（turn_id 分组；NULL turn_id 的旧行按会话各自
@@ -1997,7 +2455,10 @@ def _speed_turns(con, session_ids, covers):
     n=请求数、msl=按有效输出排序的 [模型, 输出] 明细、c=轮预估费用 USD（价表可能
     含兜底均价，展示层恒标「含兜底估价」，不冒充完整牌价）。
     刻意不存 v（单点 t/s）：渲染端所有柱/桶/均值一律按 Σout÷Σms 重算，杜绝算术平均。
-    返回 (turns, session_rows)：session_rows 供顶部名称表一次性取会话名/项目归属。"""
+    返回 (turns, session_rows)：session_rows 供顶部名称表一次性取会话名/项目归属。
+    v305 增量维护：prev_turns+delta 给定时只重算受新行/翻转行影响的轮，其余轮对象
+    原样复用（引用相等）；需要整体重算时两者都传 None。delta 之外的查询面与全量
+    路径同款（窗口发现限最近 N 轮 + NULL 轮防御上限），确保两种路径收敛到同一结果。"""
     if not session_ids:
         return [], {}
     ids = list(session_ids)
@@ -2009,17 +2470,36 @@ def _speed_turns(con, session_ids, covers):
              and completed_at is not null
            group by session_id, turn_id order by ct desc limit ?""",
         (_SPEED_HISTORY_MAX_TURNS,))]
-    wanted = set(ids)
-    windows = [w for w in windows if w[0] in wanted]
-    if not windows:
-        return [], {}
+    if delta is not None:
+        # 翻转行的 completed_at 是 NULL→值的转变：窗口发现看不见它。把它所属的轮
+        # 并入受影响轮集（窗口限内且命中 wanted 才算），保证增量路径不漏轮。
+        if delta:
+            wanted_ids = set(ids)
+            seen = {(w[0], w[1]) for w in windows}
+            for r in delta:
+                pair = (r["session_id"], r["turn_id"])
+                if pair not in seen and r["session_id"] in wanted_ids \
+                        and (r["query_source"] is None or r["query_source"] == "main_turn"):
+                    windows.append(pair + (r["completed_at"],))
+                    seen.add(pair)
+            windows.sort(key=lambda w: -(w[2] or 0))
+            windows = windows[:_SPEED_HISTORY_MAX_TURNS]
+        dirty = {(r["session_id"], r["turn_id"]) for r in delta}
+        # 受影响轮全量重算，其余轮 ct 未变则原对象复用（流式帧的常态路径）
+        prev_by_pair = {(t["s"], None if t.get("k") is None else t["k"]): t for t in (prev_turns or [])}
+        stale_pairs = set()
+        for pair, t in prev_by_pair.items():
+            if pair in windows and pair not in dirty:
+                stale_pairs.add(pair)
+    else:
+        prev_by_pair, stale_pairs = {}, set()
     groups, null_pairs = {}, []
     for sid, tid, _ in windows:
         if tid is None:
             null_pairs.append(sid)
         groups.setdefault(sid, {})[tid] = []
     for sid, tids in groups.items():
-        real = [t for t in tids if t is not None]
+        real = [t for t in tids if t is not None and (sid, t) not in stale_pairs]
         for i in range(0, len(real), 400):
             part = real[i:i + 400]
             qm = ",".join("?" * len(part))
@@ -2058,6 +2538,15 @@ def _speed_turns(con, session_ids, covers):
         for tid, rows in by_tid.items():
             if not rows:
                 continue
+            pair = (sid, tid)
+            if delta is not None and pair in prev_by_pair and pair not in dirty \
+                    and prev_by_pair[pair].get("t") == max((r["completed_at"] or 0) for r in rows):
+                pt = prev_by_pair[pair]
+                keep = {k2: v for k2, v in pt.items() if k2 != "k"}
+                if tid is not None:
+                    keep["k"] = tid   # 维护键随拷贝传递：保留对象仍可被下一帧复用
+                out.append(keep)     # 浅拷贝复用：出帧侧会就地改写 s/t/tn（差分编码）
+                continue
             valid_out = valid_ms = tin = tout = 0
             models, cost_groups = {}, {}
             t0 = None
@@ -2088,6 +2577,8 @@ def _speed_turns(con, session_ids, covers):
             t = {"s": sid, "t": t1, "b": t0 or t1,
                  "out": valid_out, "ms": valid_ms,
                  "i": tin, "o": tout, "n": len(rows)}
+            if tid is not None:
+                t["k"] = tid   # v305 增量维护键（不进帧：序列化前剔除）
             ml = sorted(models.values(), key=lambda m: -m["out"])
             t["msl"] = [[m["model"], m["out"]] for m in ml if m["out"] > 0][:8]
             if _pricing is not None:
@@ -2112,13 +2603,31 @@ def _speed_history(con, sid=""):
     同一帧快照会推给所有窗口/分栏，所以这里不做 pane 级过滤：渲染端按本 pane 可信
     sid + pids 项目表自行判定「会话/项目/全部」范围（多窗互不串数据）。sid 仅作诊断。
     全库是「全部」范围的必然要求；远端身份下渲染端禁用「全部」并明示降级，不借本地
-    冒充远端历史。本地与远端不跨库拼接：远端旧版无本字段时整块不渲染。"""
+    冒充远端历史。本地与远端不跨库拼接：远端旧版无本字段时整块不渲染。
+    v305 增量维护：常驻进程内按库身份保留最近一份轮表，model_usage 有新完成行时
+    只重算受影响的轮（未受影响的轮对象引用原样复用），无新行时整表复用——大库
+    流式期间不再每帧全量捞行重算。轮对象带维护键 k（turn_id），出帧前剔除，
+    stdout 契约与全量路径字节一致；账本断代/超过保留代数时退回全量重建。"""
     covers = _provider_first_token_covers(con)
     try:
         all_ids = [r[0] for r in con.execute("select id from session")]
     except sqlite3.Error:
         all_ids = []
-    turns, srows = _speed_turns(con, all_ids, covers)
+    need_full, new_rows, flip_rows = _mu_take(con, _SPEED_DELTA_STATE)
+    if need_full:
+        turns, srows = _speed_turns(con, all_ids, covers)
+    else:
+        delta = new_rows + flip_rows
+        if not delta:
+            turns, srows = _speed_turns(
+                con, all_ids, covers, prev_turns=_SPEED_TURNS_KEEP.get("t"), delta=[])
+        else:
+            turns, srows = _speed_turns(
+                con, all_ids, covers, prev_turns=_SPEED_TURNS_KEEP.get("t"), delta=delta)
+        if len(turns) > _SPEED_KEEP_MAX_TURNS:
+            turns = turns[-_SPEED_KEEP_MAX_TURNS:]
+    # 存副本：出帧编码段会就地改写 s/t/msl（差分编码/索引化），共享同一 dict 会污染保留集
+    _SPEED_TURNS_KEEP["t"] = [{**t} for t in turns]
     try:
         window_n = con.execute(
             """select count(*) from (select session_id, turn_id from model_usage
@@ -2163,6 +2672,7 @@ def _speed_history(con, sid=""):
         cur = t["t"]
         t["t"] = cur - prev
         prev = cur
+        t.pop("k", None)   # v305 维护键只进保留结构，不出帧（stdout 契约不变）
     return {
         "source": "local",               # 数据源边界：远端身份下渲染端禁用「全部」
         "sids": sids,                    # 会话 id 索引表
@@ -2341,13 +2851,12 @@ def _session_snapshot(con, sid, cfg):
     # （_turn_rate 同款口径：_row_gen_ms 窗口 + 200ms–1h 有效段过滤，无效段不进分母；
     # 子代理与辅助 query_source 行不计）。状态栏完成态主数字（平均为主，
     # 最近一段退到 tooltip）；与子代理 rate_avg 同构。
-    # 规则 13：全会话 fetchall + 逐行窗口运算，长会话每帧数万次——按 (库身份, sid) 缓存。
-    sess_avg = _cached_session(con, sid, "avg_tps", lambda: _turn_rate(con.execute(
-        """select output_tokens, first_token_at, completed_at, started_at, reasoning_tokens, model_id, provider_id
-           from model_usage where session_id=? and status='completed'
-             and (query_source is null or query_source='main_turn')""",
-        (sid,),
-    ).fetchall(), covers)["tps"])
+    # 规则 13：全会话聚合按 (库身份, sid) 缓存；v305 融合——缓存内改走 _turn_rate_sql
+    # （口径 CASE 下推单扫，行不再过 Python；_turn_rate_sql ≡ _turn_rate 逐值等价已由
+    # tests/test_incremental_perf 锁定），缓存契约与上游 _cached_session 一致。
+    sess_avg = _cached_session(con, sid, "avg_tps", lambda: _turn_rate_sql(
+        con, "session_id=? and (query_source is null or query_source='main_turn')",
+        (sid,), covers)["tps"])
     # v300 会话级耗时聚合（会话累计 tooltip 三行 KPI 第二行）：对全会话已完成 main_turn
     # 请求求平均耗时/平均首字延迟（>0 样本过滤，同 v211 本轮口径）；总耗时 = Σ生成耗时
     # （真实生成时间，非墙钟跨度）。旧快照/缺字段时消费端按 >0 门控整行收起。
@@ -2456,38 +2965,34 @@ def _session_snapshot(con, sid, cfg):
     sub_gen = {}
     # v304 子代理级耗时/轮数聚合（子代理面板四行 KPI 第三行）：按子会话累加
     # duration/ttft 分量（avg 口径同 v300 会话：>0 样本过滤）与 Σduration（总耗时，
-    # 全部 completed 行）+ distinct turn_id（请求轮数，轮=turn_id 分组）。全部在既有
-    # sub_gen 扫描内顺带完成，零额外查询；旧快照缺字段消费端按 >0 门控降级。
+    # 全部 completed 行）+ distinct turn_id（请求轮数，轮=turn_id 分组）。
+    # v305：整段下推 SQL 按子会话分组一次求和（行不再过 Python；速度分量走
+    # _rated_case_sql 与 _row_gen_ms 同口径）；NULL turn_id 在 SQL COUNT(DISTINCT)
+    # 中不计，用 max 标记补回（Python 集合形态把 None 也算一个元素）。
     sub_timing = {}
     if sub_rows:
-        for r in con.execute(
-            """select m.session_id, m.output_tokens, m.first_token_at, m.completed_at,
-                      m.started_at, m.reasoning_tokens, m.model_id, m.provider_id,
-                      m.duration_ms, m.time_to_first_token_ms, m.turn_id
-               from model_usage m join session s2 on m.session_id = s2.id
-               where m.query_source in ('subagent','workflow_child') and s2.parent_id=? and m.status='completed'""",
-            (sid,),
-        ):
-            g = sub_gen.setdefault(r["session_id"], [0, 0])
-            tokens = r["output_tokens"] or 0
-            gen_ms = _row_gen_ms(r, covers)
-            if tokens > 0 and gen_ms and _TPS_MIN_GEN_MS <= gen_ms < _TPS_MAX_GEN_MS:
-                g[0] += tokens
-                g[1] += gen_ms
-            t = sub_timing.setdefault(r["session_id"], [0, 0, 0, 0, 0, set()])
-            t[0] += r["duration_ms"] or 0
-            if (r["duration_ms"] or 0) > 0:
-                t[1] += r["duration_ms"]
-                t[2] += 1
-            if (r["time_to_first_token_ms"] or 0) > 0:
-                t[3] += r["time_to_first_token_ms"]
-                t[4] += 1
-            t[5].add(r["turn_id"])
+        win_m, rated_m = _rated_case_sql(covers, "m.")
+        q = (f"""select m.session_id,
+         sum(case when {rated_m} then coalesce(m.output_tokens,0) else 0 end),
+         sum(case when {rated_m} then {win_m} else 0 end),
+         coalesce(sum(m.duration_ms),0),
+         coalesce(sum(case when m.duration_ms > 0 then m.duration_ms end),0),
+         coalesce(sum(case when m.duration_ms > 0 then 1 else 0 end),0),
+         coalesce(sum(case when m.time_to_first_token_ms > 0 then m.time_to_first_token_ms end),0),
+         coalesce(sum(case when m.time_to_first_token_ms > 0 then 1 else 0 end),0),
+         count(distinct m.turn_id) + max(case when m.turn_id is null then 1 else 0 end)
+   from model_usage m join session s2 on m.session_id = s2.id
+   where m.query_source in ('subagent','workflow_child') and s2.parent_id=? and m.status='completed'
+   group by m.session_id""")
+        for r in con.execute(q, tuple(covers) * q.count("m.completed_at - m.started_at") + (sid,)):
+            sub_gen[r[0]] = [r[1] or 0, r[2] or 0]
+            sub_timing[r[0]] = [r[3] or 0, r[4] or 0, r[5] or 0,
+                                r[6] or 0, r[7] or 0, r[8] or 0]
     now_ms = int(time.time() * 1000)
     # v304 汇总级耗时/轮数（子代理面板四行 KPI）：全部子代理行聚合（>0 样本过滤同
     # 会话口径；轮数=session+turn 组合去重求和；sessions=子会话去重数由 list 长度
     # 承载不下发）。无子代理时全 0，消费端按 >0 门控降级。
-    sub_turns = sum(len(t[5]) for t in sub_timing.values())
+    sub_turns = sum(t[5] for t in sub_timing.values())
     sub_dur_ms = sum(t[0] for t in sub_timing.values())
     sub_dur_n = sum(t[2] for t in sub_timing.values())
     sub_dur_pos = sum(t[1] for t in sub_timing.values())
@@ -2497,6 +3002,8 @@ def _session_snapshot(con, sid, cfg):
     sub_avg_ttft = round(sub_ttft_pos / sub_ttft_n) if sub_ttft_n else 0
     sub_models, sub_cost = _scope_models_cost(
         con, "query_source in ('subagent','workflow_child') and session_id in (select id from session where parent_id=?)", (sid,))
+    # v305：sub.list 每项的费用/模型明细一次批量算好（原先每项一条分组查询）
+    sub_costs, sub_item_models = _sub_costs_batch(con, [row[0] for row in sub_rows])
     sub = {
         "requests": sum(r[3] for r in sub_rows),
         "total": sum(r[4] for r in sub_rows),
@@ -2517,7 +3024,7 @@ def _session_snapshot(con, sid, cfg):
         **({"cost_usd": sub_cost} if sub_cost is not None else {}),
         **({"models": sub_models} if sub_models else {}),
         "list": [
-            _sub_item(con, r, sub_tasks, sub_gen, sub_timing)
+            _sub_item(con, r, sub_tasks, sub_gen, sub_timing, sub_costs, sub_item_models)
             for r in sub_rows
         ],
     }
@@ -3369,30 +3876,27 @@ def snapshot(force_sid="", routes=None, serve_con=None, include_speed_history=Fa
         try:
             day = _day_start()
             start_ms, end_ms = _epoch_ms(day), _epoch_ms(day + timedelta(days=1))
-            today = _cached_agg(("today", start_ms), _WmFn(lambda: _today_usage(
-                con, start_ms, end_ms), con)) if con else (0,) * 16
+            # v305：today/todayrate/todaydetail 共享增量维护的今日行集（水位已变时并入
+            # 新行而非整扫）；三个键仍各自挂 _cached_agg（水位未变时连行集聚合也省掉）。
+            t_rows = _cached_agg(("todayrows", start_ms), _WmFn(
+                lambda: _today_rows(con, start_ms, end_ms), con)) if con else []
+            today = _cached_agg(("today", start_ms), _WmFn(
+                lambda: _today_tuple16(t_rows), con)) if con else (0,) * 16
             # v301 今日平均输出速度：今日全部已完成 main_turn 段加权平均（_turn_rate 同款
             # 口径：_row_gen_ms 生成窗口 + 200ms–1h 有效段过滤；子代理/辅助行不计），
             # 与会话均 avg_tps 同源不同范围。2s 缓存同 today；covers 自带 60s TTL。
             # 失败降级 0，消费端 >0 门控显「—」，不为凑数伪造速度。
             def _today_rate():
-                return _turn_rate(con.execute(
-                    """select output_tokens, first_token_at, completed_at, started_at, reasoning_tokens, model_id, provider_id
-                       from model_usage where status='completed' and completed_at between ? and ?
-                         and (query_source is null or query_source='main_turn')""",
-                    (start_ms, end_ms),
-                ).fetchall(), _provider_first_token_covers(con))["tps"]
+                return _turn_rate(t_rows, _provider_first_token_covers(con))["tps"]
             # 可选增强字段：任何失败（含最小桩连接无 fetchall 的测试形态）按 0 降级
             # （消费端 >0 门控显「—」），不拖垮整帧（同 project/cost 口径）。
             try:
                 today_rate = _cached_agg(("todayrate", start_ms), _WmFn(_today_rate, con)) if con else 0
             except Exception:
                 today_rate = 0
-            # v202 今日预估费用+模型明细：同一条分组查询产出，2s 短缓存同 today
+            # v202 今日预估费用+模型明细：今日行集直接分组计价，2s 短缓存同 today
             def _today_detail():
-                models, cost = _scope_models_cost(
-                    con, "completed_at between ? and ?", (start_ms, end_ms))
-                return {"cost": cost, "models": models if models else []}
+                return _today_detail_rows(t_rows)
             today_detail = _cached_agg(("todaydetail", start_ms), _WmFn(_today_detail, con)) if con else None
             today_cost = today_detail["cost"] if today_detail else None
             rows = _scan_session_ids(con) if con else []
