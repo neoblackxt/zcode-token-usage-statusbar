@@ -475,14 +475,15 @@ class PromptSubmitHookSymptomTest(Fixture):
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
 
+    # clean 分叉契约翻转（改造表 #5）：UserPromptSubmit 的 additionalContext 无条件为空——
+    # 上游「无数据显示暂无文案 / 有数据显示速率」的两个断言翻转为「恒不注入」；
+    # 覆盖 db 读取与状态记录仍照常运行（--current 守卫依赖），只是不再产出注入文本。
     def test_control_without_override_reports_no_data(self):
-        self.assertIn(NO_DATA, self.background_line())
+        self.assertEqual("", self.background_line(), "clean 分叉：无数据也不注入暂无文案")
 
     def test_background_line_reads_override_db(self):
         self.put("data", cfg(self.override_db))
-        ctx = self.background_line()
-        self.assertIn("token/s(上轮)", ctx)
-        self.assertNotIn(NO_DATA, ctx)
+        self.assertEqual("", self.background_line(), "clean 分叉：读到覆盖库也不注入速率行")
 
 
 if __name__ == "__main__":
