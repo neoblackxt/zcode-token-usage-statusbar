@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.16**（tag `v1.5.16`，commit `1648b15`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.16`（release_tool 强制严格 SEMVER，且与上游同版本可原地替换、不触发插件管理器升级提示）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.16**（tag `v1.5.16`，commit `1648b15`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.16`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -138,14 +138,31 @@ renderer_bridge HOST_TARGETS 新条目（表外 fail-closed 不变）、overlay 
     凭据仅驻内存；
   - 诊断文件 `diag-N.json` 含会话 id 摘要（本地，`diag:false` 可关），显式排除凭据类键。
 
-## 四、测试状态（2026-11-11，Windows 本机，v1.5.16 基线）
+## 四、测试状态（2026-11-12，Windows 本机，v1.5.16 + v305 基线）
 
-- **Python 全量**：958 项中 0 失败（32 skip 为平台性跳过；v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958，增量均为上游新用例：enc:v2 取钥分发/冷却/失配限频/密文守卫、Windows 可见监控 breakaway→WMI 回退等）。分叉恒比原版绿：原版 v1.5.16 在本机 935 中 9F（sudo 加载器、sqlite 临时目录占用 ×2、渲染桥 ×2、损坏库 CLI、mode 位、WMI 实机竞态 ×1——该竞态用例四套件并跑时双侧都失败、单测双侧 3/3 全绿，属负载竞态抖动而非分叉回归；其余 8 项为既有 Windows 环境性失败，v1.5.13 起每次基线同款）。分叉侧首轮 1 失败即同款 WMI 竞态抖动，单测重跑即绿，串行全量重跑 0 失败。
-- **Node 全量**：1634 项中 110 失败，**与未改动的原版 v1.5.16 在本机的失败清单逐字一致**（分叉独有失败 = 原版独有失败 = 0；v1.5.15 基线时 1582/104，+52 为上游新增测试（quota-v2 凭据链、overlay 轮播/拉取模型、引擎补丁锁表等），失败 104→110 为新测试的 Windows 环境性漂移；分叉比原版多 1 项为分叉契约用例；上游 CI（macOS）为绿），全部是上游测试在 Windows 的既有环境性失败（Git chip 域的 readdir 顺序/文件系统语义、zcode-start 额度客户端域、inject-main-lifecycle 的宿主形态桩等）。首轮四套件并跑曾现 1 个分叉侧 runtime-lock 负载竞态（子进程未就绪即退出），单文件重跑 14/14 全绿，排除后失败清单逐字一致。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写。
+- **Python 全量**：v1.5.16 基线 958 项 0 失败；v305 新增 `tests/test_incremental_perf.py` 17 项（v305 增量维护等价性：`_turn_rate_sql`≡`_turn_rate` 行形态全覆盖、速度轮表/今日行集/scan 增量若干轮（含运行中行翻转）后与全量重建一致、part 增量扫描含回执 UPDATE 与旧库无 time_updated 降级、项目范围探测放行/重算、代次账本只补差额/断代自愈/rowid 收缩自愈/内存库恒全量）。历史：v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958。原版 v1.5.16 对照 935 中 9F（8 项既有 Windows 环境性 + 1 项双侧对称 WMI 负载竞态，单测重跑 3/3 绿，非分叉回归）。
+- **Node 全量**：1634 项中 109 失败（v1.5.16 基线 110，其中 1 项已证单文件重跑即绿的负载竞态抖动；本次未改任何 JS 文件，109~110 为既有 Windows 环境性失败带内波动：Git chip 域 readdir 顺序/文件系统语义、zcode-start 额度客户端域、inject-main-lifecycle 宿主形态桩等；上游 CI（macOS）为绿）。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写。
+- **v305 实机等价验证**（6.7GB 活库）：`_turn_rate_sql` 与 Python 版在 4 个范围（昨日窗/主轮窗/全库 session_%/全库 sess_% 48,592 行）逐值相等；整帧对照做新旧双向（旧先跑/新先跑）：**结构性差异 0**，数值差异全部与「跑序之间落 1 行新请求」的漂移方向吻合（后跑侧恒大），合成冻结库由 `test_incremental_perf` 锁定字节级一致。
 - **本机跑 updater 系测试的前置条件**：`python3` 必须是真实解释器。Windows 的 Microsoft Store `python3` 执行别名存根会导致跨进程锁永不就绪 → 批量失败与挂起（此前以在 miniforge env 目录复制 `python3.exe` 解决，删除该文件即回滚）。
 - 分叉侧所有与"默认值/注入语义"相关的测试已翻转为新契约，auto 流程用例一律显式 `plugin_auto_update: true` / `pending_zip_patch: true` 前提（被测行为不变，只显式化原来隐式依赖的默认开）。教训沉淀：**文档类改动也要跑相关契约测试**——v1.5.10 的 f672dcc 改了 install-overlay.md 却未跑 `test_restart_notice`，漏掉一处 assertIn 横幅断言，v1.5.11 全量跑才暴露（本次已反转补齐）。
 
-## 五、维护
+## 五、v305 大库 serve 增量维护（2026-11-12，版本号保持 1.5.16）
+
+**问题**：6.7GB 用量库（`part` 正文 4.9GB + `message` 0.77GB）上，`zusage.py serve` 常驻进程活跃期占 60~92% 单核致系统卡顿。归因：单帧快照 2.84s（492 次 SQL、74,832 行过 Python）> 泵最小间隔 1.5s → 连续饱和；上游 1.5.15→1.5.16 对查询链零改动，与版本无关（py-spy/cProfile 实测定位）。
+
+**修复（全部纯本地读路径，stdout 契约字节不变）**：
+
+- **增量基座**（`_mu_advance`/`_mu_take`）：按库身份维护 rowid 水位 + 运行中行监视表 + 代次账本 `[(gen, new, flip)]`。PK 范围扫 `rowid > wm` 只触新行；宿主「先插 running 行、完成时 UPDATE」的翻转经监视行按 rowid 回查当帧捕获；消费方按代次只补差额。兜底：首见/状态超 `_WM_MAX_AGE_MS`/`max(rowid)` 收缩（行删除）/账本断代/任何异常 → 整体重建自愈。陈旧上界与既有水位契约一致（≤20s，specs/perf-lag-reduction.md §8）。
+- **四消费方增量化**：`_scan_session_ids`（session_id→max 合并）、今日行集 `_today_rows`（16 列今日元组/均速/模型费用三键共享，行不再整扫）、`_speed_history` 轮表（受影响轮全量重算、未受影响轮对象 ct 等值复用；维护键 `k` 只进保留结构不出帧）、`_sub_agent_tasks`（part 按 `time_updated >=` 水位增量解析，回执 UPDATE 天然覆盖；旧库列漂移退回 v217 全量两列扫描不缓存）。
+- **项目范围探测**（`_proj_untouched`）：多项目帧里全局水位过度失效（一处活跃击穿全部项目键）；水位变了先按项目成员集做 `rowid >` 范围探测（毫秒级），无新行命中续用缓存。成员枚举与聚合同源（`_project_member_ids`）。
+- **速度口径 SQL 下推**（`_turn_rate_sql`/`_rated_case_sql`）：`_row_gen_ms` 的窗口判定（推理前置/Claude/首块即落章 covers/200ms–1h 有效带）下推为 CASE 表达式库内求和，会话均值/项目分片不再整段捞行过 Python。口径锁定：NULL 首字行计入 unrated 的三值逻辑语义（`coalesce((rated)=1,0)=0`）、covers 参数按文本出现次数计数且先于 WHERE 参数绑定。
+- **子代理费用批量化**（`_sub_costs_batch`）：sub.list 每项一条分组查询改一次 IN 分组按 sid 拆分计价；`sub_gen`/`sub_timing` 逐行循环改单条分组 SQL（NULL turn_id 以 max 标记补回 COUNT DISTINCT 语义）。
+
+**实测**（同一 6.7GB 活库）：冷帧 2.8s→2.6s（冷路径含一次性全量构建），**暖帧 2.6s→0.46~0.83s**；等价性见 §四。配套运行侧缓解：用户配置 `activity_min_ms: 8000`（泵活跃期间隔 1.5s→8s，约 5 倍频次削减）。
+
+**正确性边界**（有意为之）：翻转帧可见性以 `_WM_MAX_AGE_MS`（20s）为上界，与 v254 水位缓存的既有陈旧契约一致、不放宽；轮表保留 8000 轮 > 窗口 6000 防正常轮转误逐；账本 32 代，超落后消费方整体重建。
+
+## 六、维护
 
 ### 上游更新通知与升级流程
 
