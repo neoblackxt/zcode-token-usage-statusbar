@@ -308,6 +308,22 @@ test("github rate-limited notes fall back to the official GitCode mirror", async
   assert.deepEqual(hosts2, ["api.github.com"]);
 });
 
+test("clean fork: non-upstream repositories never fall back to the mirror", async (t) => {
+  // fork/第三方渠道限流不回退官方镜像——镜像只同步官方上游仓库的 Release，
+  // 回退拉到的是官方同号正文，按 fork 身份缓存会冒充本渠道日志（与检查链
+  // GITHUB_UPSTREAM_REPOSITORY 门同款，上游 notes 链漏接、clean 分叉补齐）。
+  const hosts = [];
+  const service = createNotesService({
+    fetch: async (url) => {
+      hosts.push(new URL(url).hostname);
+      throw Object.assign(new Error("Release 请求失败 (403)"), { status: 403 });
+    },
+  });
+  const r = await service.getNotes({ flavor: "github", repository: "neoblackxt/zcode-token-usage-statusbar", version: "1.5.19" });
+  assert.equal(r.ok, false); assert.equal(r.reason, "rate-limited");   // 如实限流，不拿官方正文顶替
+  assert.deepEqual(hosts, ["api.github.com"]);                          // 只有主源一跳，未触镜像域
+});
+
 test("mirror 404 is authoritative: missing beats the primary rate limit", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "zusage-notes-404-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
