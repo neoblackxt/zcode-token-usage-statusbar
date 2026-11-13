@@ -1016,8 +1016,19 @@ function pushPluginState(wc, state) {
   wc.executeJavaScript(`window.__zusagePluginUpdate && window.__zusagePluginUpdate(${JSON.stringify(payload)})`, true).catch(() => { });
 }
 /* ack 必须先于更新器初始化：createUpdater 会在创建瞬间快照 marker 状态并作为首帧
- * 推送——若 ack 后跑，已清除的「待重启」会在重启后的第一分钟被误报（实测 2026-11-01）。 */
-acknowledgeRestart();
+ * 推送——若 ack 后跑，已清除的「待重启」会在重启后的第一分钟被误报（实测 2026-11-01）。
+ * 但「先发起」只保证顺序不保证完成：ack 的 python 子进程要零点几秒才删掉 marker，
+ * 更新器快照可能撞在窗口内——首帧带着「marker 在」的旧事实，重启后头一两秒面板显
+ * 瞬时「待重启」。完成回调里补一次销账核验（同款机制热换链文件尾早有，启动链此前
+ * 漏接）：marker 已删且更新器已建则撤红点并重播状态，窗口期收敛到一轮轮询内。 */
+acknowledgeRestart(() => {
+  try {
+    if (!fs.existsSync(path.join(HERE, ".plugin-restart-required"))) {
+      if (pluginUpdater && typeof pluginUpdater.noteRuntimeAcked === "function") pluginUpdater.noteRuntimeAcked();
+      broadcastPluginState();
+    }
+  } catch (e) { LOG("startup restart-ack refresh failed:", e.message); }
+});
 /* v258：初始化提炼为可重入函数——同名热替换循环（文件尾 hotReloadMainModules）复用
  * 同一套装配代码重建实例；require 失败时模块级变量保留旧实例，行为与首装失败一致。 */
 function initPluginUpdater() {
