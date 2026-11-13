@@ -688,6 +688,12 @@ function createNotesService(options) {
     const result = await runner();
     if (result.ok || (result.reason !== "rate-limited" && result.reason !== "network")) return result;
     if (primary.flavor === "gitcode") return result;   // gitcode 形态本身就在镜像域上，没有第二跳
+    /* clean 分叉补门（与 checkGithubRelease 镜像回退同款 GITHUB_UPSTREAM_REPOSITORY 门，
+     * 上游 notes 链漏接）：镜像只同步官方上游仓库的 Release——fork/第三方渠道回退拉到的
+     * 是官方同号正文（内容与 fork 自己的发布说明不同），按原身份键缓存会冒充本渠道日志。
+     * 非官方上游渠道不回退，如实返回限流/网络失败（展示层按既有缓存兜底）。 */
+    if (typeof primary.repository !== "string" ||
+        !sameRepository(primary.repository, GITHUB_UPSTREAM_REPOSITORY)) return result;
     const mirror = await runner({ flavor: "gitcode", repository: NOTES_GITCODE_MIRROR });
     if (mirror.ok) return { ...mirror, mirror: true };   // 镜像命中：缓存仍按原身份键存放（同项目同号内容）
     if (mirror.reason === "missing") return { ...mirror, mirror: true };   // 镜像确认同号无 Release：比主源限流更准确，如实显示缺失
