@@ -2,9 +2,9 @@
 
 # ZCode Token 速度状态栏（clean 分叉）
 
-> **本仓库是 [ByteRax/zcode-token-usage-statusbar](https://github.com/neoblackxt/zcode-token-usage-statusbar) 的去入侵化分叉**（`clean` 分支，基于上游 v1.5.18）：
+> **本仓库是 [ByteRax/zcode-token-usage-statusbar](https://github.com/neoblackxt/zcode-token-usage-statusbar) 的去入侵化分叉**（`clean` 分支，基于上游 v1.5.19）：
 > hook 任何路径都不向模型上下文注入文字、不自动安装/修改客户端文件、后台自动更新与引擎补丁缺省关闭、卸载还原全部修改。
-> 全部功能保留，仅改为显式开启。详见 **[CLEAN_FORK.md](CLEAN_FORK.md)**（含 v1.5.9 全量与 v1.5.10~v1.5.18 增量安全审计结论：未发现恶意代码）。
+> 全部功能保留，仅改为显式开启。详见 **[CLEAN_FORK.md](CLEAN_FORK.md)**（含 v1.5.9 全量与 v1.5.10~v1.5.19 增量安全审计结论：未发现恶意代码）。
 
 **让 ZCode 的对话窗口底部多一条小状态栏：模型有多快、token 花了多少、上下文还剩多少，一眼看到。**
 

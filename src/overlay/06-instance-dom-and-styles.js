@@ -223,8 +223,12 @@
      * → v339 详情卡点击空白/Esc 关闭（issue #297）：document mousedown 捕获外点判定（tipOutsideDown）——target 落在自绘浮层本体/条面/设置面板/各弹框之外即收，主 tip cause="outside" 进 hideTip 硬保活窗白名单（v271/v329 的 1.2s 窗不再吞「点过 Tab 后点空白」；devKeepTip 常驻模式契约不变仍只认 Escape/齿轮/再点同格），额度/速率/重置卡/子代理行内/git chip tooltip 与费用说明/档位说明浮层一并收（柱体 Portal pointer-events:none 无需排除）；document keydown 冒泡全局 Escape 兜底（tipGlobalEsc）——焦点在 body 时既有元素级 Esc 链收不到，此处一次收一个且不 preventDefault/stopPropagation 不吞宿主语义，冒泡挂载保住 tip 内「先收档位说明不关卡」分层。
      * → v340 心跳不再深拷贝整窗快照（issue #309，长会话卡顿；规格 specs/perf-lag-reduction.md 规则 10–12）：桥 v2 的 getState() 每次都是整窗深拷贝（本机 374 行 ≈1ms，报告者 6868 行 ≈86ms），而 100ms 心跳里 bridgeTick 健康检查与 updateLive→subRunningList 每拍各读一次（无 stats 时「思考中」合成再读一次）、每次 store 通知还有 subscribeStore 与 overlay 回调各读一次，v2 桥下 ≥20 次整窗拷贝/秒。三处修复且与桥代际无关（v2/v3 均有效）：①心跳经 handleSnapshot 读 handle 上的快照记录（通知回调写入，超 SNAP_FRESH_MS=2s 才回源一次并兼作 store 关闭/换代探活，时钟回拨按陈旧）；②turn-stats.js subscribeStore 把本次已读 state 传给 changed(state)，回调不再二读；③通知处理按实测成本自适应合并（上次处理 ≥8ms 时间隔 min(1s, cost×9)，占比 ≤~10%，尾部定时器归订阅持有、退订即清；廉价会话逐字不变）。pane 切会话仍由 handle.sid/sideKey 即时重绑；不改桥模板与 BRIDGE_GEN（冷路径）。
      * → v341 issue #309 复审补修：子代理槽位通知回调复用 changed(state) 不再二读；通知处理同步分支作废迟到的尾部定时器；全局 setTimeout/clearTimeout 缺席时不抛进宿主通知链（退回同步处理）；订正「窗口恒 60 行」旧注释（reducer 增量不截）。
+     * → v342 ⚙ 面板底栏「反馈问题」左侧新增「联系我」按钮：点击经 openMpShell 复用 .zu-mp-ov 弹窗外壳（收窄 .zu-ct-ov 卡宽）展示维护者微信二维码远程直链（http 直链经实测可用；https 不可达；宿主渲染页 file:// 无混合内容拦截），加载失败隐藏图片换文字兜底；Esc/遮罩/✕ 关闭沿用壳协议，外部点击豁免走既有 .zu-mp-ov 白名单。随批修复既有潜在缺陷：openMpShell 系自有弹层被 modalOpen（v62）误判宿主模态——body 直挂全屏遮罩+内部 role=dialog 完整命中两层判定 ⇒ track 收条连带 closeSettings（用户实报：点「联系我」/关弹框后设置面板被关）；modalOpen 两层扫描与 isOwnOverlay 豁免清单补 .zu-mp-ov/.zu-rot-pk-dlg/.zu-compact-dlg，宿主真模态判定不变。复审补修：.zu-ct-img 补 [hidden] 显式隐藏（作者 display:block 压过 UA [hidden]，同 .zu-update-progress 先例）；mp 壳 Esc 升捕获相+stopPropagation 对齐 rotPkKey 协议（焦点在面板内按 Esc 曾关面板留弹窗）；error 守卫改 isConnected；img 补宽高属性防加载回流；09 面板外点白名单补 .zu-compact-dlg；⚙ 联网边界披露「联系我」图床拉图。
+     * → v343 turn-text 回推诊断计数（issue #321「生成时长缺失，暂不显示速率」每轮常驻且零可观测）：完成态占位行的速率来自数据库富文本回推（token_rate.py --turn --current），此前回推失败全静默——空交付不区分「主进程没回（旧冷文件/通道断）」与「Python spawn 失败、15s 超时、非零退出」及「库没追上」。渲染端新增页面存活期单调计数 rt（sent、ok、empty、miss、stale，空交付原因细分 spawn/timeout/pyerr）随 FATAL.det.rt 落 diag-*.json；miss=请求 20s 无回执（略大于主进程 15s 超时），stale=未匹配在途请求的设计内淘汰回执；主进程空交付带原因标签属 inject-main.cjs 冷文件改动，需完全重启才细分，旧主进程回退落 empty 桶。
+     * → v344 增强提示词按钮（specs/prompt-enhance.md）：模型 chip（chat-model-select-trigger，空配置「管理模型」分支同名）左侧 ✦ 按钮，chip 缺位回退用量圆环左侧；点击读 composer 草稿（__zcodeLexicalInputE2E，Lexical 直写 DOM 不进 EditorState 的唯一官方写通道）经 pluginRequest("prompt-enhance") 主进程按会话模型凭据（v4-model-config 实时选择优先、快照 last 兜底）一次性非流式改写后回填前重读草稿比对防覆盖用户编辑，再以 setText 替换，20 秒内按钮变撤销态恢复原文；增强中忽略再点（主进程 60s 超时 + 渲染端 75s 兜底）；警示态 4s 自愈（空草稿/模型未识别/失败原因/冲突）。实现落 model-puller.cjs enhanceText（三协议非流式 POST、套餐源 planTokenOf 解密、api-key 型自定义供应商、错误摘录脱敏）+ inject-main 白名单三动作（prompt-enhance / prompt-enhance-cancel 取消 / enhance 开关，enhance_enabled 缺省开显式 false 关、推送面 enhanceEnabled）+ ⚙ 面板「回答统计」分区开关行。增强中再点按钮=取消在途请求；主进程不认识新动作的旧版本回 unknown action，按钮按失败警示不挂起。
+     * → v345 issue #327 回答末尾统计行逐拍消失/重现加固：scanDeterministicLines 在 owner 令牌取不到的单拍里对已验证归属的行整块 remove 且当拍 continue 不重建，令牌逐拍抖动即呈约 0.5s 一档的亮灭、块高归零下方内容跳动。现对「证据缺席」型空令牌（owner 无归属实例 / sid 实例暂无会话）且行仍属同一 tid（新增 __zuDetTid）宽限：连续 3 拍且跨过 1s 才撤（拍数防回执爆发耗尽、墙钟防后台节流拉长，同一扫描内多 box 命中同一行只计一次，时钟回拨视为到期，恢复一拍清零）；scope 与 sid 不符或侧聊远端（属于别的会话的反证）、归属换成另一个有效令牌（SID/scope 切换）、无 __zuDetOwner/__zuDetTid 的遗留行仍即时撤，fail-closed 对这些情形不松动。带行 box 令牌为空的原因拍数（owner/sid/scope）、宽限放行数 grace、空令牌撤行数 removed、非空令牌换代撤旧数 swap 与本代起算时刻 since 累计进 FATAL.det.nullOwner 随 diag 落盘，供报告者回传定位是哪个写入方在抖动。未证因果：本机复现不了，宽限属加固而非已确认根因的修复。
      */
-    var VERSION = "v341";
+    var VERSION = "v345";
     /* issue #55：这三个 var 必须先于下方 buildPanel() 的调用完成赋值——var 只提升声明不提升
      * 赋值，而 buildPanel → syncUpdate 首轮执行就会读它们（赋值语句曾排在调用点之后，
      * v1.5.2 首轮读到 undefined 抛 TypeError 拖垮实例创建）。配套函数是声明有提升，留在原位。 */
@@ -531,6 +535,11 @@
       ".zu-quota[data-zusage-light] .zu-qseg.zu-qb-crit{color:#d8482f}" +
       ".zu-quota[data-zusage-light] .zu-qseg.zu-qb-exc{text-shadow:none}" +
       ".zu-quota[data-zusage-light] .zu-qseg.dim{color:#8a8a8a}" +
+            ".zu-enhance{display:inline-flex;align-items:center;justify-content:center;height:1.75rem;width:1.75rem;padding:0;border-radius:.5rem;border:none;background:transparent;color:var(--color-foreground-subtle,rgba(255,255,255,.55));cursor:pointer;user-select:none;flex:0 0 auto;outline:none}" +
+      ".zu-enhance:hover,.zu-enhance:focus-visible{background:var(--color-hover,rgba(255,255,255,.08));color:var(--color-foreground,#fff)}" +
+      ".zu-enhance:focus-visible{outline:2px solid var(--color-input-border-focused,var(--color-brand,#57c8ff))!important;outline-offset:2px}" +
+      ".zu-enhance[aria-busy=true] svg{animation:zumpspin .9s linear infinite}" +
+      ".zu-enhance.zu-ewarn{color:var(--color-destructive,#ff2d55)}" +
       /* v146 精简模式速率 chip（.zu-tsb）：挂工具行、重置卡左侧；字体显式规格与 .zu-quota
        * 同源（--text-ui-base-1px + 700 + tabular-nums，用户规格 2026-10-28 对齐；v315 起字族 sans）。
        * 速率色档复用全局 .ok/.warm/.hot 与 TPS 十档类（含 Ultra 渐变 ✦）；浅色组靠 chip
@@ -825,9 +834,15 @@
       ".zu-settings .zu-settings-scroll:disabled{color:var(--color-foreground-subtle,#8791a3);cursor:default}" +
       /* 反馈按钮（v70）：常驻底栏右缘，点击经 window.open 交由系统默认浏览器打开 issues */
       ".zu-settings .zu-settings-feedback-status{flex:0 1 auto;min-width:0;color:var(--color-foreground-subtle,#a1a1a1);font-size:calc(var(--ui-font-size,14px) - 2px);overflow-wrap:anywhere}" +
-      ".zu-settings .zu-settings-feedback{flex:0 0 auto;font:inherit;font-size:calc(var(--ui-font-size,14px) - 2px);" +
+      ".zu-settings .zu-settings-feedback,.zu-settings .zu-settings-contact{flex:0 0 auto;font:inherit;font-size:calc(var(--ui-font-size,14px) - 2px);" +
       "color:var(--color-foreground,#e9edf4);background:var(--color-hover,rgba(255,255,255,.07));" +
       "border:1px solid var(--color-border,rgba(255,255,255,.14));border-radius:6px;padding:3px 10px;cursor:pointer}" +
+      /* v342 联系我弹窗：复用 .zu-mp-ov/.zu-mp-modal 外壳，收窄为二维码卡宽 */
+      ".zu-ct-ov .zu-mp-modal{width:auto;max-width:min(360px,calc(100vw - 48px))}" +
+      ".zu-ct-img{display:block;max-width:280px;max-height:60vh;width:auto;height:auto;margin:2px auto 0;border-radius:10px}" +
+      ".zu-ct-img[hidden]{display:none}" +   /* 作者 display:block 压过 UA [hidden]，error 兜底要显式隐藏（.zu-update-progress 同款先例） */
+      ".zu-ct-note{color:var(--color-foreground-subtle,#8791a3);font-size:calc(var(--ui-font-size,14px) - 2px);text-align:center;margin-top:8px}" +
+      ".zu-mp-ov.zu-light .zu-ct-note{color:#64748b}" +
       /* 子代理明细面板（v49）：点击条目弹出的固定面板（与设置面板同机制，互斥打开）；
        * 面板不随鼠标消失，绕开悬停+tab 的全部几何问题。 */
       ".zu-sub{cursor:pointer}" +
@@ -1724,6 +1739,7 @@
       (typeof zuRotatorSectionHtml === "function" ? zuRotatorSectionHtml(secOpen("rotator") === "") : "") +
       '<section class="zu-settings-section" data-sec="stats"' + secOpen("stats") + '><div class="cap">' + L("回答统计", "Reply statistics") + '</div><div class="zu-settings-card">' +
       settingRow('<input type="checkbox" class="zu-rate-line">', L("回答末尾追加统计行", "Append stats to each reply"), L("切换后立即重扫：关闭会撤下插件生成的统计行，开启会补回可用记录。下一次提问沿用该设置；历史正文和已缓存统计行不重算。", "Rescans immediately: off removes plugin-generated lines; on restores available records. Applies to the next prompt; historical text and cached statistics are not recalculated.")) +
+      settingRow('<input type="checkbox" class="zu-enhance-toggle">', L("增强提示词按钮", "Prompt enhance button"), L("在输入框工具条模型选择按钮左侧显示 ✦ 按钮：点击用当前会话模型把输入框草稿改写得更清晰后替换原文，20 秒内可点按钮撤销。点击会向当前模型供应商发送草稿文本并消耗其额度；默认开启，主进程端同名开关关闭时不渲染。", "Shows a ✦ button left of the model picker in the composer toolbar: click to rewrite the composer draft with the current session model and replace it (click again within 20s to undo). Clicking sends the draft text to the current model provider and consumes its quota; on by default, and the button is hidden when the main-process switch of the same name is off.")) +
       '</div></section>' +
       '<section class="zu-settings-section" data-sec="quota"' + secOpen("quota") + '><div class="cap">' + L("套餐额度", "Plan quota") + '</div><div class="zu-settings-card">' +
       settingRow('<input type="checkbox" class="zu-quota-enable">', L("显示套餐额度", "Show plan quota"), L("在输入框上下文按钮左侧显示当前登录账号编码套餐的已用比例与重置时间（含 Start Plan 免费档池的已用比例与到期时间；账号级套餐池，不是单个模型独享）。默认开启，关闭即停查询。点击 chip 立即刷新。", "Shows the signed-in account's coding-plan usage and reset time left of the context button (plus the Start Plan free tier's usage and expiry; account-level pool, not per model). On by default; turning it off stops the queries. Click the chip to refresh.")) +
@@ -1750,9 +1766,10 @@
       '<section class="zu-settings-section" data-sec="about"' + secOpen("about") + '><div class="cap">' + L("关于数据", "About the data") + '</div><div class="pnote">' +
       L("数据库统计：只读本地用量库（默认 ~/.zcode/cli/db/db.sqlite，跟随宿主 dataBaseDir 迁移），请求完成后入库；总 token 为输入加输出，缓存已含在输入中，思考已含在输出中。", "Database statistics: read-only from the local usage database (default ~/.zcode/cli/db/db.sqlite; follows the host dataBaseDir migration), written after requests complete. Total tokens = input + output; cache is included in input and thinking in output.") + '</div><div class="pnote">' +
       L("生成速度：只读渲染器状态桥在生成时按字符增量估算，完成后切换为真实速度；桥不可用时回退数据库最近有效段。", "Generation speed: the read-only renderer bridge estimates from text deltas while running and uses actual speed after completion; without the bridge it falls back to the latest valid database segment.") + '</div><div class="pnote">' +
-      L("联网边界：额度源查询对应账号的套餐或余额接口；插件更新可联网下载代码与读取发布日志（源码渠道为注册仓库的同号 Release 参考）。额度不是本地 token 统计推算值。SSH 数据查询使用已配置通道。", "Network boundaries: quota sources query account plan/balance endpoints; plugin updates can download code and read release notes (source channels read the registered repo's same-version release as reference). Quota is not inferred from local token usage. SSH statistics use configured connections.") + '</div></section></div></div>' +
+      L("联网边界：额度源查询对应账号的套餐或余额接口；插件更新可联网下载代码与读取发布日志（源码渠道为注册仓库的同号 Release 参考），「联系我」弹窗会从维护者图床加载微信二维码图片。额度不是本地 token 统计推算值。SSH 数据查询使用已配置通道。", "Network boundaries: quota sources query account plan/balance endpoints; plugin updates can download code and read release notes (source channels read the registered repo's same-version release as reference), and the Contact-me dialog loads the maintainer's WeChat QR image from their image host. Quota is not inferred from local token usage. SSH statistics use configured connections.") + '</div></section></div></div>' +
       '<div class="zu-settings-foot"><button type="button" class="zu-settings-scroll"></button>' +
       '<span class="zu-settings-feedback-status" role="status" aria-live="polite"></span>' +
+      '<button type="button" class="zu-settings-contact">' + L("联系我", "Contact me") + '</button>' +
       '<button type="button" class="zu-settings-feedback">' + L("反馈问题", "Report an issue") + '</button></div>';
       panel.querySelectorAll('input[name=zu-lang]').forEach(function (r) {
         r.checked = state.lang === r.value;

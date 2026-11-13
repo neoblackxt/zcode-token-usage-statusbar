@@ -2010,10 +2010,11 @@ def _sub_agent_tasks(con, sid):
     if len(_TASK_CACHE) > 32:   # 防长驻膨胀：会话数有限，正常到不了；超了整表清掉
         _TASK_CACHE.clear()
         _TASK_AT.clear()
-    _TASK_CACHE[sid] = (key, tasks)
+    # v305 六元组统一形态（规则 15 节流依赖缓存恒有值；legacy/桩形态 dbkey=None 也写，
+    # tasks 恒在 hit[2]——上游 hot 包装按此取值；旧库无 part 表时 key=None 每帧重扫不受影响）
+    _TASK_CACHE[sid] = (key, dbkey, tasks, agent_parts,
+                        stamp[0] if stamp else 0, stamp[1] if stamp else 0)
     _TASK_AT[sid] = int(time.time() * 1000)
-    if not legacy and dbkey is not None:
-        _TASK_CACHE[sid] = (key, dbkey, tasks, agent_parts, stamp[0], stamp[1])
     return tasks
 
 
