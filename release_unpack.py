@@ -237,8 +237,13 @@ def identities(data, version):
     require(isinstance(entries, list) and len(entries) == 1 and isinstance(entries[0], dict),
             "marketplace must contain exactly one plugin")
     entry = entries[0]
-    require(entry.get("name") == PLUGIN and entry.get("version") == version and
-            entry.get("source") in ("./plugins/" + PLUGIN, "plugins/" + PLUGIN),
+    # clean 分叉双形态：源码路径（上游 zip 内清单）或 Release 资产 url（仓库根清单，
+    # 渠道判定走 release→API 检查；sha256 描述 zipball 之外的资产，全零占位=待回填）
+    source = entry.get("source")
+    source_ok = (isinstance(source, str) and source in ("./plugins/" + PLUGIN, "plugins/" + PLUGIN)) or (
+        isinstance(source, dict) and source.get("source") == "url" and source.get("type") == "zip" and
+        source.get("path") == "plugins/" + PLUGIN and source.get("stripRoot") in (None, False))
+    require(entry.get("name") == PLUGIN and entry.get("version") == version and source_ok,
             "marketplace plugin name/version/source disagrees")
     declared_resources(plugin, data)
     for name, content in data.items():

@@ -70,6 +70,14 @@ class ReleaseIntegrationTests(unittest.TestCase):
         for name in source_tool.SYNC_FILES:
             (self.root / name).write_bytes(self.source_bytes[source_tool.PREFIX + name])
         (self.root / "release_tool.py").write_bytes((ROOT / "release_tool.py").read_bytes())
+        # clean 分叉 url 形态清单：仓库段重写为夹具仓库，保持「任意仓库可发布」语义
+        import re as _re
+        market_raw = (self.root / "marketplace.json").read_text(encoding="utf-8")
+        market_raw = _re.sub(r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/releases/download/",
+                            f"https://github.com/{REPOSITORY}/releases/download/", market_raw)
+        (self.root / "marketplace.json").write_text(market_raw, encoding="utf-8")
+        # git stub 的 HEAD blob 以 source_bytes 为准：同步重写后的清单字节
+        self.source_bytes["marketplace.json"] = (self.root / "marketplace.json").read_bytes()
         self.tool = load_module("integration_fixture_release_tool", self.root / "release_tool.py")
         self.helper = load_module("integration_fixture_release_unpack", self.root / "release_unpack.py")
         self.plugin_manifest = json.loads(self.source_bytes[self.tool.PREFIX + ".zcode-plugin/plugin.json"])
@@ -172,7 +180,14 @@ class ReleaseIntegrationTests(unittest.TestCase):
         market = json.loads((self.output / "marketplace.json").read_bytes())
         self.assertEqual(market, json.loads(self.source_bytes["marketplace.json"]))
         self.assertEqual(market["plugins"][0]["version"], result["version"])
-        self.assertEqual((self.output / market["plugins"][0]["source"]).resolve(), plugin_root)
+        # clean 分叉双形态：源码路径形态断言解包目录指向插件根；url 形态断言资产描述字段
+        # （sha256 全零占位=待回填，仓库段已被夹具重写为 REPOSITORY）
+        if isinstance(market["plugins"][0]["source"], str):
+            self.assertEqual((self.output / market["plugins"][0]["source"]).resolve(), plugin_root)
+        else:
+            src = market["plugins"][0]["source"]
+            self.assertEqual(src["source"], "url")
+            self.assertEqual(src["path"], "plugins/" + self.tool.PLUGIN)
         expected_catalog = copy.deepcopy(market)
         expected_catalog["plugins"][0]["source"] = {
             "source": "url", "type": "zip", "url": "https://github.com/" + REPOSITORY +
