@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.18**（tag `v1.5.18`，commit `2219bad`；跨 v1.5.17=01bdcd3 / v1.5.18 两版一次 rebase），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.18`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.19**（tag `v1.5.19`，commit `fce5e2d`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.19`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -9,9 +9,9 @@
 本目标已固化为仓库最高规范：[AGENTS.md](AGENTS.md) 首节「分叉最高原则：上下文零入侵」——
 对本仓库工作的任何人（含 AI 助手）具有约束力，与上游合并冲突时按该原则裁剪。
 
-## 一、改造清单（相对上游 v1.5.18）
+## 一、改造清单（相对上游 v1.5.19）
 
-| # | 行为 | 上游 v1.5.18 | clean 分叉 | 实现位置 |
+| # | 行为 | 上游 v1.5.19 | clean 分叉 | 实现位置 |
 |---|---|---|---|---|
 | 1 | SessionStart 未注入时自动安装（改 app.asar，恒开无开关） | 无条件自动装 | **不装**，仅 stderr 日志提示 `/install-overlay` | `overlay_install.py` `run_hook()` |
 | 2 | SessionStart 已注入时自动补渲染桥（改 asar 内 renderer 资产） | 每次会话自动补 | **不动**，补桥仅经显式安装命令 | 同上 |
@@ -51,7 +51,7 @@
 后者会还原全部客户端修改包括引擎补丁）。旧键 `plugin_auto_install_overlay` 与环境变量
 `ZUSAGE_PLUGIN_AUTO_INSTALL` 在上游 v1.5.7 起已失效，clean 分叉中无对应行为可开关。
 
-## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.18 增量）
+## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.19 增量）
 
 四个独立审计覆盖全部运行时代码（更新/加载器链、凭据与数据流向、安装/补丁链、渲染层载荷
 overlay.js），**均未发现恶意代码**；v1.5.10 增量（token_pricing 费用链、v208 更新红点、
@@ -116,6 +116,20 @@ dataBaseDir 两库仲裁、#307 store 缓存承诺、#309 心跳免深拷贝、#
 **无新增默认开行为面、无新外发端点**（团队套餐端点属用户显式配置的查询域），
 改造表维持 12 项（第 10 项语义随上游 v339 重写）。
 
+**v1.5.19 增量（2026-11-13 复核，16 提交）**：①**GitHub→官方 GitCode 镜像自动回退**
+（issue #310：github.com 不可达/限流时检查与下载回退 `tanranran/zcode-token-usage-statusbar`
+官方镜像）——**上游自带 fork 保护门**：检查与下载两处都限定「注册仓库 ==
+官方上游仓库（GITHUB_UPSTREAM_REPOSITORY）才镜像」，diff 注释明言「fork 渠道不静默换装
+官方字节」；本机市场注册 neoblackxt 不匹配 → 不触发镜像、如实报错，红线安全，无需分叉化；
+②**大库单核满载 P0 修复**（上游与分叉 v305 同题竞速）：泵慢帧冷却（inject-main 占空比
+封顶 ~50%，对所有帧生效无门槛）+ 会话级聚合缓存 `_cached_session`（规则 13）+
+`_sub_agent_tasks_hot` 3s 节流（规则 15）+ `_provider_fallback` 水位缓存——**与 v305 增量
+基座正交叠加**（分叉融合：`avg_tps` 缓存内改走 `_turn_rate_sql` SQL 下推；hot 节流的缓存
+结构下标适配 v305 六元组；冷却机制与 v305 帧成本下降互补）；③宿主 3.18.2 适配（引擎补丁
+与渲染桥锚点登记，纯登记）；④overlay v342~v345（联系我二维码弹窗、增强提示词按钮 ✦、
+统计行令牌宽限三连修 #327、turn-text 诊断 #321）纯 UI/渲染。结论：**无新默认开行为面**；
+镜像回退端点仅官方渠道注册者可达（分叉渠道被上游门控显式排除）。
+
 - **网络出口全量枚举，无陌生主机**：GitHub/GitCode（更新渠道，含资产 CDN：
   release-assets/objects.githubusercontent.com、file-cdn.gitcode.com、api.gitcode.com）+
   各模型厂商官方端点（bigmodel/z.ai/zcode.z.ai/minimax/moonshot-kimi/deepseek/
@@ -153,10 +167,10 @@ dataBaseDir 两库仲裁、#307 store 缓存承诺、#309 心跳免深拷贝、#
     凭据仅驻内存；
   - 诊断文件 `diag-N.json` 含会话 id 摘要（本地，`diag:false` 可关），显式排除凭据类键。
 
-## 四、测试状态（2026-11-12，Windows 本机，v1.5.18 + v305 基线）
+## 四、测试状态（2026-11-13，Windows 本机，v1.5.19 + v305 基线）
 
-- **Python 全量**：1054 项中 1 失败（v1.5.18 基线；上游 v1.5.17/18 新增 96 用例：全部项目聚合、workflow 会话、token_rate db 覆盖、两库仲裁等）。唯一失败 `test_memory_db_no_cache_file_db_cached_with_ttl` 为上游新测试自身的 Windows 缺陷（临时目录内连接未关致 cleanup WinError 32，pristine 上游对照同样失败，双侧对称非分叉回归）。上游新断言「背景行注入文案」的 2 用例（token_rate_db_override）按分叉契约翻转为「恒不注入」（改造表 #5 纪律）。历史：v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958 → v1.5.18 1054。v305 新增 `tests/test_incremental_perf.py` 17 项（v305 增量维护等价性：`_turn_rate_sql`≡`_turn_rate` 行形态全覆盖、速度轮表/今日行集/scan 增量若干轮（含运行中行翻转）后与全量重建一致、part 增量扫描含回执 UPDATE 与旧库无 time_updated 降级、项目范围探测放行/重算、代次账本只补差额/断代自愈/rowid 收缩自愈/内存库恒全量）。历史：v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958。原版 v1.5.16 对照 935 中 9F（8 项既有 Windows 环境性 + 1 项双侧对称 WMI 负载竞态，单测重跑 3/3 绿，非分叉回归）。
-- **Node 全量**：分叉 1732 项 112 失败 vs pristine 上游 v1.5.18 对照 1731 项 112 失败，**失败清单逐字一致**（fork-only = ctl-only = 空集；分叉多 1 项为契约用例且通过；上游 CI（macOS）为绿），全部为上游测试在 Windows 的既有环境性失败（Git chip 域 readdir 顺序/文件系统语义、zcode-start 额度客户端域、inject-main-lifecycle 宿主形态桩、v1.5.17/18 新测试的环境漂移等）。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写、背景行恒不注入 2 用例（v1.5.18 翻转）。
+- **Python 全量**：1071 项中 1 失败（v1.5.19 基线；上游 v1.5.19 新增 17 用例：hot 节流/会话缓存/镜像回退等）。上游 v1.5.17/18 新增 96 用例：全部项目聚合、workflow 会话、token_rate db 覆盖、两库仲裁等）。唯一失败 `test_memory_db_no_cache_file_db_cached_with_ttl` 为上游新测试自身的 Windows 缺陷（临时目录内连接未关致 cleanup WinError 32，pristine 上游对照同样失败，双侧对称非分叉回归）。上游新断言「背景行注入文案」的 2 用例（token_rate_db_override）按分叉契约翻转为「恒不注入」（改造表 #5 纪律）。历史：v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958 → v1.5.18 1054 → v1.5.19 1071。v305 新增 `tests/test_incremental_perf.py` 17 项（v305 增量维护等价性：`_turn_rate_sql`≡`_turn_rate` 行形态全覆盖、速度轮表/今日行集/scan 增量若干轮（含运行中行翻转）后与全量重建一致、part 增量扫描含回执 UPDATE 与旧库无 time_updated 降级、项目范围探测放行/重算、代次账本只补差额/断代自愈/rowid 收缩自愈/内存库恒全量）。历史：v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958。原版 v1.5.16 对照 935 中 9F（8 项既有 Windows 环境性 + 1 项双侧对称 WMI 负载竞态，单测重跑 3/3 绿，非分叉回归）。
+- **Node 全量**：分叉 1810 项 101 失败 vs pristine 上游 v1.5.19 对照 1809 项 101 失败，**失败清单逐字一致**（fork-only = ctl-only = 空集；分叉多 1 项为契约用例且通过），全部为上游测试在 Windows 的既有环境性失败。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写、背景行恒不注入 2 用例（v1.5.18 翻转）。
 - **v305 实机等价验证**（6.7GB 活库）：`_turn_rate_sql` 与 Python 版在 4 个范围（昨日窗/主轮窗/全库 session_%/全库 sess_% 48,592 行）逐值相等；整帧对照做新旧双向（旧先跑/新先跑）：**结构性差异 0**，数值差异全部与「跑序之间落 1 行新请求」的漂移方向吻合（后跑侧恒大），合成冻结库由 `test_incremental_perf` 锁定字节级一致。
 - **本机跑 updater 系测试的前置条件**：`python3` 必须是真实解释器。Windows 的 Microsoft Store `python3` 执行别名存根会导致跨进程锁永不就绪 → 批量失败与挂起（此前以在 miniforge env 目录复制 `python3.exe` 解决，删除该文件即回滚）。
 - 分叉侧所有与"默认值/注入语义"相关的测试已翻转为新契约，auto 流程用例一律显式 `plugin_auto_update: true` / `pending_zip_patch: true` 前提（被测行为不变，只显式化原来隐式依赖的默认开）。教训沉淀：**文档类改动也要跑相关契约测试**——v1.5.10 的 f672dcc 改了 install-overlay.md 却未跑 `test_restart_notice`，漏掉一处 assertIn 横幅断言，v1.5.11 全量跑才暴露（本次已反转补齐）。
@@ -265,6 +279,13 @@ dataBaseDir 两库仲裁、#307 store 缓存承诺、#309 心跳免深拷贝、#
   静默换成上游正文（本轮首跑即误用，靠后续冲突里 HEAD 侧出现上游横幅文案检出，
   `git rebase --abort` 后重来）。版本对齐提交顺带清掉上游 v1.5.15 已删除的 Web 旁挂版
   全部文档引用（README×3 各 3 处）并把插件 README 新增 ByteRax 文档链接重定向到分叉。
+  v1.5.19 rebase 实录（2026-11-13）：17 个分叉提交一次重放（基线 2219bad → fce5e2d），
+  5 个 stop：clean 分叉（README/config.example/两 manifest，--theirs）、redirect（双语
+  README，--theirs）、v1.5.10 跟进（overlay 三件，--theirs 后按 §五先例取 fce5e2d 形态
+  重放三段门控文案重建——本次又拦下同一 -518 行抹除事故）、v305（zusage 三块手动融合：
+  `_cached_session`×`_proj_untouched` 同位双保留；`avg_tps` 缓存内改走 `_turn_rate_sql`；
+  `_sub_agent_tasks_hot` 下标适配 v305 六元组 hit[2]）、其余自动并入（泵冷却/`_TASK_AT`
+  维护/`_provider_fallback` 拆分/session_usage 缓存等与 v305 无碰撞）。
   v1.5.17~v1.5.18 rebase 实录（2026-11-12）：14 个分叉提交（13 + v305）一次重放
   （基线 1648b15 → 2219bad），4 个 stop：①clean 分叉 stop（config.example + 两 manifest，
   --theirs）；②v1.5.10 跟进 stop（overlay 三件，--theirs——**事后核查发现该整文件取侧抹掉
