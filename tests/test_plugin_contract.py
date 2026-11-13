@@ -44,7 +44,9 @@ class PluginContractTests(unittest.TestCase):
         tool = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(tool)
         with tempfile.TemporaryDirectory(prefix="zusage-contract-release-") as temporary:
-            result = tool.build(ROOT, "ByteRax/zcode-token-usage-statusbar", Path(temporary) / "out")
+            # clean 分叉：清单 source 为 url 形态（仓库段 neoblackxt），build 的仓库归属校验
+            # 要求 --repo 与清单一致；上游 CI（ByteRax 仓库）跑的是上游源码形态清单，不受影响
+            result = tool.build(ROOT, "neoblackxt/zcode-token-usage-statusbar", Path(temporary) / "out")
             catalog = json.loads(Path(result["catalog"]).read_text(encoding="utf-8"))
             market = json.loads((ROOT / "marketplace.json").read_text(encoding="utf-8"))
             self.assertEqual(catalog["plugins"][0]["description_i18n"],
