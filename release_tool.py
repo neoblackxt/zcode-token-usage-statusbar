@@ -61,6 +61,38 @@ def read_file(path, limit=MAX_FILE):
     return path.read_bytes()
 
 
+def catalog_url_pattern(version):
+    """url 形态清单下载地址的形态（仓库段留给 build 层与 --repo 核对）。"""
+    return (r"https://github\.com/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+"
+            rf"/releases/download/v{re.escape(version)}/{re.escape(zip_name(version))}")
+
+
+def catalog_source_error(source, version):
+    """marketplace entry.source 的形态校验（clean 分叉双形态）：
+    ①字符串=上游源码路径形态（宿主按 zipball 快照内路径取插件目录）；
+    ②对象=Release 资产形态（分叉主用：渠道判定走 release→API 检查、下载走
+    release-assets CDN——源码形态在 zipball 大流受限的网络里检查/安装全链不可用，
+    见 CLEAN_FORK §五）。url 须指向本版本资产；sha256 允许全零占位（发布流程
+    回填真值），build 时以实算 sha256 写入 zip 内清单。返回错误串或 None。"""
+    if isinstance(source, str):
+        return None if source == "./plugins/" + PLUGIN else "marketplace source path disagrees"
+    if not isinstance(source, dict):
+        return "marketplace source must be a path string or url object"
+    if source.get("source") != "url" or source.get("type") != "zip":
+        return "marketplace source kind disagrees"
+    if not (isinstance(source.get("url"), str) and
+            re.fullmatch(catalog_url_pattern(version), source["url"])):
+        return "marketplace source url disagrees"
+    if not (isinstance(source.get("sha256"), str) and
+            re.fullmatch(r"[a-f0-9]{64}", source["sha256"])):
+        return "marketplace source sha256 must be 64 hex chars (all-zero placeholder allowed)"
+    if source.get("path") != "plugins/" + PLUGIN:
+        return "marketplace source path disagrees"
+    if source.get("stripRoot") not in (None, False) or source.get("headers") is not None:
+        return "marketplace source extra fields disagree"
+    return None
+
+
 def identities(data, expected=None):
     market = json.loads(data["marketplace.json"])
     manifest = json.loads(data[PREFIX + ".zcode-plugin/plugin.json"])
@@ -76,8 +108,10 @@ def identities(data, expected=None):
     require(isinstance(entries, list) and len(entries) == 1, "unexpected marketplace plugins")
     entry = entries[0]
     require(isinstance(entry, dict), "marketplace entry must be an object")
-    require(entry.get("name") == PLUGIN and entry.get("version") == version and
-            entry.get("source") == "./plugins/" + PLUGIN, "marketplace version/name/source disagrees")
+    require(entry.get("name") == PLUGIN and entry.get("version") == version,
+            "marketplace version/name disagrees")
+    source_error = catalog_source_error(entry.get("source"), version)
+    require(not source_error, source_error or "marketplace source disagrees")
     require(manifest.get("commands") == "commands" and manifest.get("skills") == "skills",
             "plugin component paths disagree")
     require(expected is None or expected == version, "requested version disagrees")
@@ -125,6 +159,16 @@ def build(root, repo, out, version=None):
     repo = repository(repo)
     data = source_data(root, version)
     version = identities(data, version)
+    # url 形态清单的仓库段须与本次 --repo 一致（identities 只锁 tag/文件名的版本一致性）。
+    # zip 内清单保持仓库原样（源码形态/上游形态自洽；url 形态清单的 sha256 描述的是
+    # zipball 之外的 release 资产，塞进 zip 反而形成自指依赖——渠道判定读的是宿主
+    # 市场缓存里的清单，即 plugin-releases 根 marketplace.json）。
+    entry_source = json.loads(data["marketplace.json"])["plugins"][0].get("source")
+    if isinstance(entry_source, dict):
+        m = re.fullmatch(r"https://github\.com/([A-Za-z0-9._-]+/[A-Za-z0-9._-]+)/releases/download/.*",
+                         entry_source.get("url") or "")
+        require(m and m.group(1) == repo,
+                "marketplace source url repository disagrees with --repo")
     require(not out.exists() and not out.is_symlink(), "output directory already exists")
     out.mkdir(parents=True, exist_ok=False)
     asset = out / zip_name(version)
