@@ -22,7 +22,12 @@ class PluginPackageTests(unittest.TestCase):
         self.assertEqual(manifest, compatibility)
         self.assertEqual(manifest["name"], PLUGIN.name)
         self.assertEqual(manifest["version"], entry["version"])
-        self.assertEqual((ROOT / entry["source"]).resolve(), PLUGIN)
+        # clean 分叉双形态：源码路径断言目录指向；url 形态断言资产描述字段（插件根由
+        # 清单 source.path 指向，实文件校验由 release 工具链覆盖）
+        if isinstance(entry["source"], str):
+            self.assertEqual((ROOT / entry["source"]).resolve(), PLUGIN)
+        else:
+            self.assertEqual(entry["source"]["path"], "plugins/" + PLUGIN.name)
         for component in ("commands", "skills"):
             self.assertTrue((PLUGIN / manifest[component]).is_dir())
         self.assertTrue((PLUGIN / ".mcp.json").is_file())
