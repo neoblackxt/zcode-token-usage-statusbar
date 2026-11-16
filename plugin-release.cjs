@@ -1,5 +1,6 @@
 "use strict";
 const https = require("https");
+const http2 = require("http2");   // clean 分叉：h2 隧道下载（http/1.1 经代理出口被限速的网络）
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -152,6 +153,16 @@ function releaseAcceptHeader(hostname) {
     : hostname === "api.gitcode.com" ? "application/json"
     : "application/octet-stream";
 }
+/* clean 分叉：HTTP 代理隧道工厂（inject-main 主进程注入；CLI/测试不注入=原生直连）。
+ * 背景：github.com 下载入口在部分网络直连不可达（21s 超时）而经本机代理可达——
+ * Node https.get 不认 *_proxy 环境变量，更新器下载全链超时。工厂按目标主机返回
+ * CONNECT 隧道 agent 或 undefined（no_proxy 语义由注入方实现，api.github.com 等
+ * 直连更快/代理被拒的域不走隧道）。 */
+let httpAgentFactory = null;
+function setHttpAgentFactory(factory) {
+  httpAgentFactory = typeof factory === "function" ? factory : null;
+}
+
 async function fetchBytes(url, limit, onProgress, allowedHosts) {
   let activeRequest, activeResponse, timer, settled = false;
   return new Promise((resolve, reject) => {
@@ -170,7 +181,57 @@ async function fetchBytes(url, limit, onProgress, allowedHosts) {
         const allowed = parsed.protocol === "https:" && !parsed.username && !parsed.password && !parsed.port &&
           (allowedHosts || DOWNLOAD_HOSTS).includes(parsed.hostname);
         if (!allowed) throw new Error("拒绝非 GitHub/GitCode HTTPS 更新地址");
-        const request = https.get(parsed, { headers: { "User-Agent": "zcode-token-usage-statusbar-release-updater",
+        const tunnel = httpAgentFactory ? httpAgentFactory(parsed.hostname) : undefined;
+        const tunnelAgent = tunnel && tunnel.agent ? tunnel.agent : undefined;
+        if (tunnel && typeof tunnel.h2Socket === "function") {
+          /* clean 分叉 h2 隧道：出口对 http/1.1 长流限速（实测 26KB/s）而 h2 正常
+           * （~285KB/s）——每跳新建 h2 session（与 h1 无 keepAlive 同语义），重定向/
+           * 白名单/上限逻辑与下方 h1 分支逐字对齐。 */
+          let h2Session = null;
+          try {
+            tunnel.h2Socket(parsed.hostname, (socketError, tlsSocket) => {
+              if (socketError) { finish(socketError); return; }
+              try {
+                h2Session = http2.connect("https://" + parsed.hostname, { createConnection: () => tlsSocket });
+                h2Session.on("error", (error) => finish(error));
+                const h2request = h2Session.request({
+                  ":method": "GET", ":path": parsed.pathname + parsed.search,
+                  "user-agent": "zcode-token-usage-statusbar-release-updater",
+                  "accept": releaseAcceptHeader(parsed.hostname),
+                  "x-github-api-version": "2022-11-28" });
+                activeRequest = h2request;
+                h2request.on("response", (headers) => {
+                  const status = headers[":status"];
+                  const location = headers.location;
+                  if ([301, 302, 303, 307, 308].includes(status)) {
+                    h2request.resume();
+                    if (!location || redirects >= 3) { finish(new Error("下载重定向无效")); return; }
+                    try { h2Session.close(); visit(new URL(location, parsed).href, redirects + 1); }
+                    catch (error) { finish(error); }
+                    return;
+                  }
+                  if (status !== 200) { finish(new Error(`Release 请求失败 (${status})`)); return; }
+                  const declared = Number(headers["content-length"] || 0);
+                  if (!Number.isSafeInteger(declared) || declared < 0 || declared > limit) { finish(new Error("发布资源超过大小上限")); return; }
+                  const chunks = []; let length = 0;
+                  h2request.on("data", (chunk) => {
+                    if (settled) return;
+                    length += chunk.length;
+                    if (length > limit) finish(new Error("发布资源超过大小上限"));
+                    else { chunks.push(chunk); if (onProgress) onProgress(length, declared || null); }
+                  });
+                  h2request.on("end", () => { if (!settled) { h2Session.close(); finish(null, Buffer.concat(chunks)); } });
+                  h2request.on("error", (error) => finish(error));
+                });
+                h2request.on("error", (error) => finish(error));
+                h2request.end();
+              } catch (error) { finish(error); }
+            });
+          } catch (error) { finish(error); return; }
+          return;
+        }
+        const request = https.get(parsed, { ...(tunnelAgent ? { agent: tunnelAgent } : {}),
+          headers: { "User-Agent": "zcode-token-usage-statusbar-release-updater",
           "Accept": releaseAcceptHeader(parsed.hostname),
           "X-GitHub-Api-Version": "2022-11-28" } }, (response) => {
           if (settled) { response.destroy(); return; }
@@ -721,5 +782,5 @@ function createNotesService(options) {
 
 module.exports = { sameRepository, sameAssetUrl, githubRepository, gitcodeRepository, readChannel, checkRelease, gitcodeReleaseFromCatalog, githubReleaseFromCatalog, validateGitcodeRelease, validateGithubCatalogRelease,
   checkGitcodeMirrorRelease, validateGithubMirrorRelease, GITCODE_MIRROR_REPOSITORY, GITHUB_UPSTREAM_REPOSITORY,
-  downloadRelease, validateRelease, validateManifest, catalogChannel, probeRepositoryRename,
+  downloadRelease, validateRelease, validateManifest, catalogChannel, probeRepositoryRename, setHttpAgentFactory,
   fetchBytes, fetchReleaseNotes, fetchReleaseNotesList, createNotesCache, createNotesService, notesTag, releaseAcceptHeader, NOTES_API_HOSTS, NOTES_MAX_JSON, NOTES_LIST_MAX_JSON, NOTES_LIST_MAX, MAX_ASSET, MAX_JSON, PLUGIN_ID };

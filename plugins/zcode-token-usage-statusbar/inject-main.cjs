@@ -17,6 +17,9 @@
 "use strict";
 const path = require("path");
 const fs = require("fs");
+const https = require("https");
+const net = require("net");
+const tls = require("tls");
 const { spawn, execFile } = require("child_process");
 const { createHash } = require("crypto");
 const { app, BrowserWindow, webContents, dialog } = require("electron");
@@ -1031,10 +1034,78 @@ acknowledgeRestart(() => {
 });
 /* v258：初始化提炼为可重入函数——同名热替换循环（文件尾 hotReloadMainModules）复用
  * 同一套装配代码重建实例；require 失败时模块级变量保留旧实例，行为与首装失败一致。 */
+/* clean 分叉：更新器下载链的代理隧道工厂——github.com 下载入口直连不可达（21s 超时）
+ * 而经本机代理 ~700KB/s 可达的网络里，fetchBytes 的原生 https.get 不认 *_proxy 环境变量，
+ * 「立即更新」全链超时。工厂按主机返回 CONNECT 隧道 agent；ZCODE_NO_PROXY/no_proxy 命中
+ * （api.github.com 等代理被拒/直连更快的域）与无代理配置时返回 undefined=原生直连。
+ * 每次 initPluginUpdater 重新注入（热换 plugin-release 模块级工厂会随实例重建而清空）。 */
+function proxyTunnelAgentFactory() {
+  const proxyRaw = process.env.ZCODE_HTTP_PROXY || process.env.https_proxy ||
+    process.env.HTTPS_PROXY || process.env.https_proxy || "";
+  const pm = /^https?:\/\/([^\/:]+)(?::(\d+))?/.exec(proxyRaw || "");
+  if (!pm) return () => undefined;
+  const [, proxyHost, proxyPortStr] = pm;
+  const proxyPort = Number(proxyPortStr) || 80;
+  const noProxy = String(process.env.ZCODE_NO_PROXY || process.env.no_proxy || "")
+    .split(",").map((s) => s.trim().toLowerCase().replace(/^\./, "")).filter(Boolean);
+  return (hostname) => {
+    const host = String(hostname || "").toLowerCase();
+    if (!host) return undefined;
+    if (noProxy.some((p) => host === p || host.endsWith("." + p))) {
+      return undefined;   // no_proxy 命中：直连（api.github.com 直连 200，代理出口反被拒）
+    }
+    /* h2 隧道优先（实测：该出口对 http/1.1 长流限速 ~26KB/s，h2 ~285KB/s——ALPN 协商
+     * h2 后 fetchBytes 走 http2 分支）；协商不出 h2 时 fetchBytes 自动落到 { agent }
+     * 的 http/1.1 隧道，两条路都在。 */
+    const connectThroughProxy = (hostname, onTunnel) => {
+      const sock = net.connect(proxyPort, proxyHost);
+      sock.once("error", (error) => onTunnel(error, null));
+      sock.write("CONNECT " + hostname + ":443 HTTP/1.1\r\nHost: " + hostname + ":443\r\n\r\n");
+      let head = "";
+      const onData = (chunk) => {
+        head += chunk.toString("latin1");
+        if (!head.includes("\r\n\r\n")) return;
+        sock.off("data", onData);
+        if (!/ 200 /.test(head.split("\r\n")[0])) {
+          sock.destroy();
+          onTunnel(new Error("代理 CONNECT 失败: " + head.split("\r\n")[0]), null);
+          return;
+        }
+        onTunnel(null, sock);
+      };
+      sock.on("data", onData);
+    };
+    return {
+      agent: new https.Agent({
+        keepAlive: false,
+        createConnection: (options, callback) => {
+          connectThroughProxy(options.host, (error, sock) => {
+            if (error) { callback(error); return; }
+            const tlsSock = tls.connect({ socket: sock, servername: options.host }, () => callback(null, tlsSock));
+            tlsSock.once("error", () => { try { tlsSock.destroy(); } catch (e) { } });
+          });
+        },
+      }),
+      h2Socket: (hostname, callback) => {
+        connectThroughProxy(hostname, (error, sock) => {
+          if (error) { callback(error, null); return; }
+          const tlsSock = tls.connect({ socket: sock, servername: hostname, ALPNProtocols: ["h2", "http/1.1"] }, () => {
+            if (tlsSock.alpnProtocol === "h2") callback(null, tlsSock);
+            else { tlsSock.destroy(); callback(new Error("ALPN 未协商出 h2"), null); }
+          });
+          tlsSock.once("error", () => { try { tlsSock.destroy(); } catch (e) { } });
+        });
+      },
+    };
+  };
+}
+
 function initPluginUpdater() {
   try {
     const prevState = pluginUpdater && typeof pluginUpdater.status === "function" ? pluginUpdater.status() : null;
     const { createUpdater } = require("./plugin-updater.cjs");
+    try { require("./plugin-release.cjs").setHttpAgentFactory(proxyTunnelAgentFactory()); }
+    catch (agentError) { LOG("proxy tunnel agent unavailable:", agentError.message); }
     pluginUpdater = createUpdater({ runtime: HERE, home: app.getPath("home"),
       resourcesPath: process.resourcesPath, executable: process.execPath,
       initialState: prevState,
