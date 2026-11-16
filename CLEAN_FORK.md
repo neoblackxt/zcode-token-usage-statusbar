@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.19**（tag `v1.5.19`，commit `fce5e2d`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.19`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.20**（tag `v1.5.20`，commit `aba185d`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.20`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -9,9 +9,9 @@
 本目标已固化为仓库最高规范：[AGENTS.md](AGENTS.md) 首节「分叉最高原则：上下文零入侵」——
 对本仓库工作的任何人（含 AI 助手）具有约束力，与上游合并冲突时按该原则裁剪。
 
-## 一、改造清单（相对上游 v1.5.19）
+## 一、改造清单（相对上游 v1.5.20）
 
-| # | 行为 | 上游 v1.5.19 | clean 分叉 | 实现位置 |
+| # | 行为 | 上游 v1.5.20 | clean 分叉 | 实现位置 |
 |---|---|---|---|---|
 | 1 | SessionStart 未注入时自动安装（改 app.asar，恒开无开关） | 无条件自动装 | **不装**，仅 stderr 日志提示 `/install-overlay` | `overlay_install.py` `run_hook()` |
 | 2 | SessionStart 已注入时自动补渲染桥（改 asar 内 renderer 资产） | 每次会话自动补 | **不动**，补桥仅经显式安装命令 | 同上 |
@@ -51,7 +51,7 @@
 后者会还原全部客户端修改包括引擎补丁）。旧键 `plugin_auto_install_overlay` 与环境变量
 `ZUSAGE_PLUGIN_AUTO_INSTALL` 在上游 v1.5.7 起已失效，clean 分叉中无对应行为可开关。
 
-## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.19 增量）
+## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.20 增量）
 
 四个独立审计覆盖全部运行时代码（更新/加载器链、凭据与数据流向、安装/补丁链、渲染层载荷
 overlay.js），**均未发现恶意代码**；v1.5.10 增量（token_pricing 费用链、v208 更新红点、
@@ -115,6 +115,19 @@ dataBaseDir 两库仲裁、#307 store 缓存承诺、#309 心跳免深拷贝、#
 #321 诊断计数、#341 子代理回调修复——全部纯本地读/渲染修复。结论：
 **无新增默认开行为面、无新外发端点**（团队套餐端点属用户显式配置的查询域），
 改造表维持 12 项（第 10 项语义随上游 v339 重写）。
+
+**v1.5.20 增量（2026-11-16 复核，72 提交）**：①**sysmon 系统监控**（v356~369：主进程
+采样器 sysmon-client.cjs + 状态条格 + Tooltip 图标化 + 设置页重构）——本地读（性能计数器/
+WMI），按窗订阅采样（无订阅零开销），无外发；②**增强历史默认开启落盘**（v363：`saveHistory`
+无键即落盘 `enhance-history.json`，仅显式 false 仅内存）——本机文件、无外发，功能默认值
+跟随上游（同 answer_rate_line 先例）；③**v375/v376 模型明细「平均速度」列 + 统计行增强**——
+`_turn_rate` 增 per_model、`_scope_models_cost` 挂列、todaydetail 合并 tps 单键（todayrate 键
+退役）；④Windows mkstemp 受保护目录快错批 + install/upgrade review 修复批；⑤浮层长文本
+布局防护、额度重置卡提速（v361）、排序卡复审等 UI 批。注意：**手机远控中继（b917e45）与
+v375 速度列的 mobile 部分在 v1.5.20 tag 之后**（归下版）。结论：**无新外发端点、无新注入/
+自动安装面**，改造表维持 12 项。v375 per_model 三层分解与 v305 SQL 架构融合（_turn_rate_sql
+增 per_model 分组下推、sub 区追加 (sid,模型) 分组 SQL、_sub_costs_batch 挂列、today 行集
+就地累加）。
 
 **v1.5.19 增量（2026-11-13 复核，16 提交）**：①**GitHub→官方 GitCode 镜像自动回退**
 （issue #310：github.com 不可达/限流时检查与下载回退 `tanranran/zcode-token-usage-statusbar`
@@ -279,6 +292,14 @@ dataBaseDir 两库仲裁、#307 store 缓存承诺、#309 心跳免深拷贝、#
   静默换成上游正文（本轮首跑即误用，靠后续冲突里 HEAD 侧出现上游横幅文案检出，
   `git rebase --abort` 后重来）。版本对齐提交顺带清掉上游 v1.5.15 已删除的 Web 旁挂版
   全部文档引用（README×3 各 3 处）并把插件 README 新增 ByteRax 文档链接重定向到分叉。
+  v1.5.20 rebase 实录（2026-11-16）：22 个分叉提交（19 + 启动 ack 修复 + notes 镜像门 +
+  渠道改造）一次重放（基线 fce5e2d → aba185d），stop 同前例（README/manifests --theirs；
+  overlay 三件 --theirs 后按先例取 aba185d 形态重放三段门控文案重建——本次拦下 -4314 行
+  抹除；zusage 9 块手动融合：v375 per_model 三层分解 × v305 SQL 架构——_turn_rate_sql 加
+  per_model 分组下推、sess_avg 缓存值随上游改 {tps, per_model}、sub 区追加 (sid,模型) 分组
+  速度 SQL 喂三字典、_sub_costs_batch 挂 avg_tps、today 行集就地累加 per_model 且
+  todaydetail 合并 tps（todayrate 键随上游退役）；manifest --theirs 抹掉上游新增
+  packageLayout（38→37）已从 aba185d 恢复）。
   v1.5.19 rebase 实录（2026-11-13）：17 个分叉提交一次重放（基线 2219bad → fce5e2d），
   5 个 stop：clean 分叉（README/config.example/两 manifest，--theirs）、redirect（双语
   README，--theirs）、v1.5.10 跟进（overlay 三件，--theirs 后按 §五先例取 fce5e2d 形态
