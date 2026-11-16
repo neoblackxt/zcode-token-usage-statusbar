@@ -12,7 +12,7 @@
         "source": "url",
         "type": "zip",
         "url": "https://github.com/neoblackxt/zcode-token-usage-statusbar/releases/download/v1.5.20/zcode-token-usage-statusbar-v1.5.20.zip",
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "sha256": "afb32fe58c22ec969d9ef3a1b0b4028329e2e766d8e162badf82958f6ae24d91",
         "path": "plugins/zcode-token-usage-statusbar",
         "stripRoot": false
       },
