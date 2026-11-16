@@ -46,7 +46,9 @@ async function bootLoader(t, markerHashes, createdAt, installation = {}) {
 
 test("acknowledgeRestart runs before updater init: the first pushed state is already post-ack", () => {
   const source = fs.readFileSync(path.join(__dirname, "..", "inject-main.cjs"), "utf8");
-  const ack = source.indexOf("acknowledgeRestart();");
+  // clean 分叉：启动 ack 带完成回调（销账核验+状态重播，收敛重启后瞬时「待重启」帧），
+  // 匹配放宽为调用点前缀——「ack 先于 createUpdater」的时序意图不变
+  const ack = source.indexOf("acknowledgeRestart(");
   const init = source.indexOf("pluginUpdater = createUpdater({");
   assert.ok(ack >= 0, "acknowledgeRestart 调用缺失");
   assert.ok(init > ack, "ack 必须先于 createUpdater——否则重启后第一分钟会推送过期的「待重启」状态（实测 2026-11-01）");
