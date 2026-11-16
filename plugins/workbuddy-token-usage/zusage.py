@@ -2151,6 +2151,11 @@ def _sub_item(con, r, sub_tasks, sub_gen, sub_timing=None, batch_cost=None, batc
             "duration_ms": t[0],
             "turns": t[5],
             "active": bool(r[10] and int(time.time() * 1000) - r[10] < 30000)}
+    if batch_cost is not None and batch_models is not None:
+        c1 = batch_cost.get(r[0])
+        m1 = batch_models.get(r[0])
+    else:
+        m1, c1 = _scope_models_cost(con, "session_id=?", (r[0],))
     if c1 is not None:
         item["cost_usd"] = c1
     if m1:
