@@ -66,6 +66,7 @@ function harness(runtimeCfg) {
       };
       if (id === "url") return require("url");
       if (id === "crypto") return require("crypto");
+      if (id === "https" || id === "net" || id === "tls") return require(id);   // clean 分叉：代理隧道工厂的模块（vm 环境直通原生）
       if (id === "child_process") return {
         spawn: () => { throw new Error("Query must not run"); },
         execFile: (command, args, options, callback) => {
