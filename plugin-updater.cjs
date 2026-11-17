@@ -801,6 +801,15 @@ function createUpdater(options) {
           mirrorPatch = patchReleaseCatalogForMirror(selectedRelease, downloaded.manifest);
           mirrorPatch.assertApplied();
           if (!isDeepStrictEqual(channel(), currentChannel)) throw cancelError("更新期间市场来源已变化");
+        } else if (currentChannel.flavor === "github" && releaseChannel.catalogChannel(readReleaseCatalog()) === "release") {
+          /* clean 分叉（url 形态清单）：宿主 CLI 刷新要拉仓库 zipball——受限网络不可行
+           * （正是清单转 Release 资产形态的动因），且清单新鲜度已由「实下载 + sha256
+           * 校验过的 manifest」保证。与上游镜像安装同构：缓存清单 entry 直接补丁到本次
+           * 已验证资产（version/url/sha256），跳过 CLI 刷新与 #247 新鲜度门（补丁后清单
+           * 即新版，门自然过）。补丁失败/取消由既有 mirrorPatch.restore 原子回滚兜底。 */
+          mirrorPatch = patchReleaseCatalogForMirror(selectedRelease, downloaded.manifest);
+          mirrorPatch.assertApplied();
+          if (!isDeepStrictEqual(channel(), currentChannel)) throw cancelError("更新期间市场来源已变化");
         } else {
           await refreshMarketplace();
           if (!isDeepStrictEqual(channel(), currentChannel)) throw cancelError("更新期间市场来源已变化");
