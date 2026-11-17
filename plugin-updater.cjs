@@ -398,8 +398,12 @@ function createUpdater(options) {
   const python = () => process.env.ZUSAGE_PLUGIN_PYTHON || (readConfig(configFile) || {}).python_path || (process.platform === "win32" ? "python" : "python3");
   const helper = path.join(__dirname, "runtime_lock.py");
   const lock = options.acquireLock || (() => acquireUpdateLock(runtime, python(), helper));
+  /* clean 分叉：宿主 CLI 安装下载的代理 env 增量（主进程环境无 *_proxy——那只注入
+   * 给终端子进程；CLI 纯 Node 直连 github.com 资产域不可达，"fetch failed"）。来源由
+   * inject-main 从 setting.json httpProxy 提供；ZCode CLI 自带 proxy-agent 网络栈认这些变量。 */
+  const cliProxyEnv = options.cliProxyEnv && typeof options.cliProxyEnv === "object" ? options.cliProxyEnv : null;
   const cli = options.cli || ((args, onSpawn) => runFile(cliExecutable(executable), [bundle, "plugins", ...args, "--json"], {
-    cwd: home, env: { ...environment, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: "1", ZCODE_STORAGE_DIR: path.dirname(storage()) }, windowsHide: true,
+    cwd: home, env: { ...environment, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: "1", ZCODE_STORAGE_DIR: path.dirname(storage()), ...(cliProxyEnv || {}) }, windowsHide: true,
     timeout: 120000, maxBuffer: 4 * 1024 * 1024,
   }, undefined, onSpawn));
   const sync = options.sync || ((root) => runFile(python(), [
