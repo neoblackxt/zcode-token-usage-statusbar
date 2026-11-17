@@ -1040,15 +1040,26 @@ acknowledgeRestart(() => {
  * （api.github.com 等代理被拒/直连更快的域）与无代理配置时返回 undefined=原生直连。
  * 每次 initPluginUpdater 重新注入（热换 plugin-release 模块级工厂会随实例重建而清空）。 */
 function proxyTunnelAgentFactory() {
-  const proxyRaw = process.env.ZCODE_HTTP_PROXY || process.env.https_proxy ||
+  /* 代理源两级：环境变量优先；主进程环境通常没有 *_proxy（那只注入给子进程）——
+   * 落到 ZCode 自身设置 ~/.zcode/v2/setting.json 的 httpProxy/httpProxyNoProxy
+   * （Chromium 网络栈读的也是它；ZCODE_NO_PROXY 注入子进程的源头同在此）。 */
+  let proxyRaw = process.env.ZCODE_HTTP_PROXY || process.env.https_proxy ||
     process.env.HTTPS_PROXY || process.env.https_proxy || "";
+  let noProxyRaw = process.env.ZCODE_NO_PROXY || process.env.no_proxy || "";
+  if (!proxyRaw) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(path.join(app.getPath("home"), ".zcode", "v2", "setting.json"), "utf8"));
+      if (typeof settings.httpProxy === "string" && settings.httpProxy) proxyRaw = settings.httpProxy;
+      if (typeof settings.httpProxyNoProxy === "string") noProxyRaw = settings.httpProxyNoProxy;
+    } catch (e) { }
+  }
   const pm = /^https?:\/\/([^\/:]+)(?::(\d+))?/.exec(proxyRaw || "");
   if (!pm) return () => undefined;
   const [, proxyHost, proxyPortStr] = pm;
   const proxyPort = Number(proxyPortStr) || 80;
-  const noProxy = String(process.env.ZCODE_NO_PROXY || process.env.no_proxy || "")
+  const noProxy = String(noProxyRaw)
     .split(",").map((s) => s.trim().toLowerCase().replace(/^\./, "")).filter(Boolean);
-  return (hostname) => {
+  const factory = (hostname) => {
     const host = String(hostname || "").toLowerCase();
     if (!host) return undefined;
     if (noProxy.some((p) => host === p || host.endsWith("." + p))) {
@@ -1098,13 +1109,21 @@ function proxyTunnelAgentFactory() {
       },
     };
   };
+  factory.factoryProxy = proxyRaw;   // 诊断：注入处回读实际代理源
+  return factory;
 }
 
 function initPluginUpdater() {
   try {
     const prevState = pluginUpdater && typeof pluginUpdater.status === "function" ? pluginUpdater.status() : null;
     const { createUpdater } = require("./plugin-updater.cjs");
-    try { require("./plugin-release.cjs").setHttpAgentFactory(proxyTunnelAgentFactory()); }
+    try {
+      const _factory = proxyTunnelAgentFactory();
+      require("./plugin-release.cjs").setHttpAgentFactory(_factory);
+      try { fs.appendFileSync(path.join(HERE, "proxy-debug.log"),
+        new Date().toISOString() + " factory injected proxy=" + (_factory.factoryProxy || "none") + " src=" +
+        (process.env.ZCODE_HTTP_PROXY || process.env.https_proxy ? "env" : "setting.json") + "\n"); } catch (e) { }
+    }
     catch (agentError) { LOG("proxy tunnel agent unavailable:", agentError.message); }
     pluginUpdater = createUpdater({ runtime: HERE, home: app.getPath("home"),
       resourcesPath: process.resourcesPath, executable: process.execPath,

@@ -182,6 +182,9 @@ async function fetchBytes(url, limit, onProgress, allowedHosts) {
           (allowedHosts || DOWNLOAD_HOSTS).includes(parsed.hostname);
         if (!allowed) throw new Error("拒绝非 GitHub/GitCode HTTPS 更新地址");
         const tunnel = httpAgentFactory ? httpAgentFactory(parsed.hostname) : undefined;
+        try { fs.appendFileSync(path.join(__dirname, "proxy-debug.log"),
+          new Date().toISOString() + " visit " + parsed.hostname + " factory=" + (httpAgentFactory ? "y" : "n") +
+          " tunnel=" + (tunnel ? (tunnel.h2Socket ? "h2" : "h1") : "none") + " r=" + redirects + "\n"); } catch (e) { }
         const tunnelAgent = tunnel && tunnel.agent ? tunnel.agent : undefined;
         if (tunnel && typeof tunnel.h2Socket === "function") {
           /* clean 分叉 h2 隧道：出口对 http/1.1 长流限速（实测 26KB/s）而 h2 正常
