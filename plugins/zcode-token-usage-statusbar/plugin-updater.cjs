@@ -398,8 +398,12 @@ function createUpdater(options) {
   const python = () => process.env.ZUSAGE_PLUGIN_PYTHON || (readConfig(configFile) || {}).python_path || (process.platform === "win32" ? "python" : "python3");
   const helper = path.join(__dirname, "runtime_lock.py");
   const lock = options.acquireLock || (() => acquireUpdateLock(runtime, python(), helper));
+  /* clean 分叉：宿主 CLI 安装下载的代理 env 增量（主进程环境无 *_proxy——那只注入
+   * 给终端子进程；CLI 纯 Node 直连 github.com 资产域不可达，"fetch failed"）。来源由
+   * inject-main 从 setting.json httpProxy 提供；ZCode CLI 自带 proxy-agent 网络栈认这些变量。 */
+  const cliProxyEnv = options.cliProxyEnv && typeof options.cliProxyEnv === "object" ? options.cliProxyEnv : null;
   const cli = options.cli || ((args, onSpawn) => runFile(cliExecutable(executable), [bundle, "plugins", ...args, "--json"], {
-    cwd: home, env: { ...environment, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: "1", ZCODE_STORAGE_DIR: path.dirname(storage()) }, windowsHide: true,
+    cwd: home, env: { ...environment, HOME: home, USERPROFILE: home, ELECTRON_RUN_AS_NODE: "1", ZCODE_STORAGE_DIR: path.dirname(storage()), ...(cliProxyEnv || {}) }, windowsHide: true,
     timeout: 120000, maxBuffer: 4 * 1024 * 1024,
   }, undefined, onSpawn));
   const sync = options.sync || ((root) => runFile(python(), [
@@ -798,6 +802,15 @@ function createUpdater(options) {
           // 把本插件 entry 指向官方镜像同版本资产（与 GitHub Release 同产物同 sha256），
           // 安装结束原子恢复原清单；版本源是刚下载校验过的 manifest，不走 GitHub 清单
           // 刷新与新鲜度门（那是 #247 防宿主按旧清单装旧版的守卫，镜像模式无此路径）。
+          mirrorPatch = patchReleaseCatalogForMirror(selectedRelease, downloaded.manifest);
+          mirrorPatch.assertApplied();
+          if (!isDeepStrictEqual(channel(), currentChannel)) throw cancelError("更新期间市场来源已变化");
+        } else if (currentChannel.flavor === "github" && releaseChannel.catalogChannel(readReleaseCatalog()) === "release") {
+          /* clean 分叉（url 形态清单）：宿主 CLI 刷新要拉仓库 zipball——受限网络不可行
+           * （正是清单转 Release 资产形态的动因），且清单新鲜度已由「实下载 + sha256
+           * 校验过的 manifest」保证。与上游镜像安装同构：缓存清单 entry 直接补丁到本次
+           * 已验证资产（version/url/sha256），跳过 CLI 刷新与 #247 新鲜度门（补丁后清单
+           * 即新版，门自然过）。补丁失败/取消由既有 mirrorPatch.restore 原子回滚兜底。 */
           mirrorPatch = patchReleaseCatalogForMirror(selectedRelease, downloaded.manifest);
           mirrorPatch.assertApplied();
           if (!isDeepStrictEqual(channel(), currentChannel)) throw cancelError("更新期间市场来源已变化");
