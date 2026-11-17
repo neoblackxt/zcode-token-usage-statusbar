@@ -1113,6 +1113,24 @@ function proxyTunnelAgentFactory() {
   return factory;
 }
 
+/* clean 分叉：宿主 CLI 子进程的代理 env（同 setting.json 源；ZCode CLI 自带
+ * proxy-agent 网络栈认标准 *_proxy 变量）。无代理配置返回 null（不注入）。 */
+function cliProxyEnvFromSettings() {
+  let proxyRaw = process.env.ZCODE_HTTP_PROXY || process.env.https_proxy || "";
+  let noProxyRaw = process.env.ZCODE_NO_PROXY || process.env.no_proxy || "";
+  if (!proxyRaw) {
+    try {
+      const settings = JSON.parse(fs.readFileSync(path.join(app.getPath("home"), ".zcode", "v2", "setting.json"), "utf8"));
+      if (typeof settings.httpProxy === "string" && settings.httpProxy) proxyRaw = settings.httpProxy;
+      if (typeof settings.httpProxyNoProxy === "string") noProxyRaw = settings.httpProxyNoProxy;
+    } catch (e) { }
+  }
+  if (!proxyRaw) return null;
+  const env = { http_proxy: proxyRaw, https_proxy: proxyRaw, HTTP_PROXY: proxyRaw, HTTPS_PROXY: proxyRaw };
+  if (noProxyRaw) { env.no_proxy = noProxyRaw; env.NO_PROXY = noProxyRaw; }
+  return env;
+}
+
 function initPluginUpdater() {
   try {
     const prevState = pluginUpdater && typeof pluginUpdater.status === "function" ? pluginUpdater.status() : null;
@@ -1128,6 +1146,9 @@ function initPluginUpdater() {
     pluginUpdater = createUpdater({ runtime: HERE, home: app.getPath("home"),
       resourcesPath: process.resourcesPath, executable: process.execPath,
       initialState: prevState,
+      /* clean 分叉：宿主 CLI 安装下载的代理 env（与隧道工厂同源 setting.json；主进程
+       * env 无 *_proxy，CLI 直连 github 资产域 fetch failed）。 */
+      cliProxyEnv: cliProxyEnvFromSettings(),
       notify: (state) => webContents.getAllWebContents().forEach((wc) => pushPluginState(wc, state)),
       /* v258：安装同步落盘且 busy 释放后先把变更模块热换进内存并销账 marker，再让更新器
        * 发布终态——已热加载的模块不再要求重启，⚙ 红点零闪烁（G3）。 */
