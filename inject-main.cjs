@@ -1136,11 +1136,7 @@ function initPluginUpdater() {
     const prevState = pluginUpdater && typeof pluginUpdater.status === "function" ? pluginUpdater.status() : null;
     const { createUpdater } = require("./plugin-updater.cjs");
     try {
-      const _factory = proxyTunnelAgentFactory();
-      require("./plugin-release.cjs").setHttpAgentFactory(_factory);
-      try { fs.appendFileSync(path.join(HERE, "proxy-debug.log"),
-        new Date().toISOString() + " factory injected proxy=" + (_factory.factoryProxy || "none") + " src=" +
-        (process.env.ZCODE_HTTP_PROXY || process.env.https_proxy ? "env" : "setting.json") + "\n"); } catch (e) { }
+      require("./plugin-release.cjs").setHttpAgentFactory(proxyTunnelAgentFactory());
     }
     catch (agentError) { LOG("proxy tunnel agent unavailable:", agentError.message); }
     pluginUpdater = createUpdater({ runtime: HERE, home: app.getPath("home"),
