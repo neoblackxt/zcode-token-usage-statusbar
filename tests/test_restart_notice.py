@@ -152,7 +152,8 @@ class RestartNoticeTests(unittest.TestCase):
         self.assertEqual(data.get("hashes"), {})
         self.assertNotIn("installation", data)
         got = notice.reminder(self.runtime, injected=True)
-        self.assertIn("用户可见·重启提醒", got["context"])
+        # clean 分叉：context 恒空串（零上下文注入）；提醒只走 message（UI/stderr 通道）
+        self.assertEqual(got["context"], "")
         self.assertIn("请完全退出 ZCode", got["message"])
         # mobile 补丁走无 hashes / 无 installation 的 installed 标记：下一次启动
         # 的 loader ack 必须能直接销账，不能像 pending-install 那样永久保留。
