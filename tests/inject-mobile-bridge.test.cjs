@@ -38,7 +38,7 @@ function harness(initial = {}) {
   };
   const load = name => {
     if (name === "fs") return mockFs;
-    if (["path", "url", "crypto"].includes(name)) return require(name);
+    if (["path", "url", "crypto", "https", "net", "tls"].includes(name)) return require(name);   // clean 分叉：inject-main 顶部更新器代理隧道 require
     if (name === "electron") return { app, ipcMain: ipc, webContents: { getAllWebContents: () => windows } };
     if (name === "child_process") return { spawn() { throw Error("disabled in fixture"); }, execFile() {} };
     if (name === "./plugin-updater.cjs") return { async updateConfig(runtime, changes, python, defaults, merge) {

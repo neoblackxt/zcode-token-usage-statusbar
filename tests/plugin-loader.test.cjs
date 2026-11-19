@@ -30,7 +30,7 @@ test("loader consumes only fixed update actions from trusted local windows and p
     unlinkSync: () => { throw new Error("Loader must acknowledge instead of deleting the marker directly"); } };
   const sandbox = {
     __dirname: "/fixture/runtime", console: { error: () => {} },
-    process: { resourcesPath: resources, execPath: process.execPath, uptime: () => 1 },
+    process: { resourcesPath: resources, execPath: process.execPath, env: {}, uptime: () => 1 },   // clean 分叉：更新器代理源读 process.env
     setInterval: (fn, delay) => { intervals.push({ fn, delay }); },
     setTimeout: () => 1, clearTimeout: () => {},
     require: (id) => {
@@ -38,6 +38,10 @@ test("loader consumes only fixed update actions from trusted local windows and p
       if (id === "fs") return mockFs;
       if (id === "url") return require("url");
       if (id === "crypto") return require("crypto");
+      if (id === "https" || id === "net" || id === "tls") return require(id);   // clean 分叉：更新器代理隧道 require
+      // clean 分叉：inject-main 顶部更新器代理隧道 require（https/net/tls/path）
+      if (id === "path") return require("path");
+      if (id === "https" || id === "net" || id === "tls") return require(id);
       if (id === "child_process") return { spawn: () => { throw new Error("Query must not run"); },
         execFile: (command, args, options, callback) => { acknowledgements.push({ command, args, options }); callback(null); } };
       if (id === "./plugin-updater.cjs") return { createUpdater: (opts) => { opts.notify(status); return stub; } };
@@ -135,7 +139,7 @@ test('quota source requests write quota-secrets.json atomically with whitelist a
   };
   const sandbox = {
     __dirname: "/fixture/runtime", console: { error: () => {} },
-    process: { resourcesPath: resources, execPath: process.execPath, uptime: () => 1 },
+    process: { resourcesPath: resources, execPath: process.execPath, env: {}, uptime: () => 1 },   // clean 分叉：更新器代理源读 process.env
     setInterval: (fn, delay) => { intervals.push({ fn, delay }); },
     setTimeout: () => 1, clearTimeout: () => {},
     require: (id) => {
@@ -143,6 +147,10 @@ test('quota source requests write quota-secrets.json atomically with whitelist a
       if (id === "fs") return mockFs;
       if (id === "url") return require("url");
       if (id === "crypto") return require("crypto");
+      if (id === "https" || id === "net" || id === "tls") return require(id);   // clean 分叉：更新器代理隧道 require
+      // clean 分叉：inject-main 顶部更新器代理隧道 require（https/net/tls/path）
+      if (id === "path") return require("path");
+      if (id === "https" || id === "net" || id === "tls") return require(id);
       if (id === "child_process") return { spawn: () => { throw new Error("no spawn"); }, execFile: (c, a, o, cb) => { acknowledgements.push({ args: a }); cb(null); } };
       if (id === "./plugin-updater.cjs") return { createUpdater: (o) => { o.notify(status); return { request: async () => {}, tick: async () => {}, status: () => status }; }, updateConfig: async () => {} };
       if (id === "./quota-client.cjs") return { createQuotaClient: () => ({ tick: () => {}, view: () => ({}), refresh: () => {}, refreshSource: () => {}, noteProvider: () => {}, credentialsChanged: () => {}, noteSnapshotExtras: () => {}, sourcesConfig: () => [], dispose: () => {} }) };
@@ -351,13 +359,14 @@ test('quota source write failures are returned without echoing credential values
   };
   const sandbox = {
     __dirname: '/fixture/runtime', console: { error() {} },
-    process: { resourcesPath: resources, execPath: process.execPath, uptime: () => 1 },
+    process: { resourcesPath: resources, execPath: process.execPath, env: {}, uptime: () => 1 },   // clean 分叉：更新器代理源读 process.env
     setInterval: (fn, delay) => { intervals.push({ fn, delay }); }, setTimeout: () => 1, clearTimeout() {},
     require(id) {
       if (id === 'path') return path;
       if (id === 'fs') return mockFs;
       if (id === 'url') return require('url');
       if (id === 'crypto') return require('crypto');
+      if (id === 'https' || id === 'net' || id === 'tls') return require(id);   // clean 分叉：更新器代理隧道 require
       if (id === 'child_process') return { spawn() { throw Error('isolated'); }, execFile(c, a, o, cb) { cb(null); } };
       if (id === './plugin-updater.cjs') return { createUpdater: () => ({ status: () => {}, tick: async () => {} }), updateConfig: async () => {} };
       if (id === './quota-client.cjs') return { createQuotaClient: () => ({ view: () => ({}), sourcesConfig: () => [], dispose() {} }) };
@@ -409,6 +418,7 @@ test('live quota selections use trusted full-window snapshots and revoke on navi
       if (id === 'fs') return mockFs;
       if (id === 'url') return require('url');
       if (id === 'crypto') return require('crypto');
+      if (id === 'https' || id === 'net' || id === 'tls') return require(id);   // clean 分叉：更新器代理隧道 require
       if (id === 'child_process') return { spawn() { throw Error('isolated'); }, execFile(c, a, o, cb) { cb(null); } };
       if (id === './plugin-updater.cjs') return { createUpdater: () => ({ status: () => ({}), tick: async () => {} }) };
       if (id === './quota-client.cjs') return { resolveQuotaPaths: () => ({ credsPath: '/fixture/home/credentials.json', credsDir: '/fixture/home', customCfgPath: '/fixture/home/provider.json', customCfgDir: '/fixture/home', builtinCfgPath: '/fixture/home/builtin.json', builtinCfgDir: '/fixture/home' }), createQuotaClient: () => ({

@@ -97,15 +97,16 @@ test('release and debug differ only by metadata and their debug switch', () => {
     .replace('// @name         ZCode 用量状态条（远控中继接收端·调试版）', '// @name         ZCode 用量状态条（远控中继接收端）')
     .replace('// @description  调试版：默认显示排障面板（帧统计/overlay 加载状态）；日常使用请安装正式版 zusage-mobile.user.js',
       '// @description  在 ZCode Web 远程控制页面渲染 token 用量；仅在确认宿主支持后同步显示偏好')
-    .replaceAll('https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.debug.user.js',
-      'https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js');
+    .replaceAll('https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.debug.user.js',
+      'https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.user.js');
   assert.equal(normalized, products.release);
 });
 
 test('install and update metadata point each variant at its root Raw URL', () => {
   for (const [variant, filename] of [['release', 'zusage-mobile.user.js'], ['debug', 'zusage-mobile.debug.user.js']]) {
     const header = products[variant].split('// ==/UserScript==')[0];
-    const expected = 'https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/' + filename;
+    // clean 分叉：油猴脚本指向本仓 clean 分支的 raw 地址
+    const expected = 'https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/' + filename;
     for (const key of ['downloadURL', 'updateURL']) {
       const lines = header.split('\n').filter(line => line.startsWith('// @' + key));
       assert.equal(lines.length, 1);

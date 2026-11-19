@@ -1,6 +1,6 @@
 # clean 分叉：去入侵化改造说明
 
-本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.20**（tag `v1.5.20`，commit `aba185d`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.20`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
+本分叉基于上游 [ByteRax/zcode-token-usage-statusbar](https://github.com/ByteRax/zcode-token-usage-statusbar) **v1.5.21**（tag `v1.5.21`，commit `d827ec0`），分支 `clean`——升级方式为 **rebase**（分叉提交线性重放在上游 tag 之上，不产生 merge 提交）。清单版本号保持 `1.5.21`（release_tool 强制**严格三段 SEMVER**——补丁位第四段如 `1.5.16.1` 会被拒；与上游同版本可原地替换、不触发插件管理器升级提示，分叉自身的功能演进如 v305（§五）直接叠在当前版本号上，升级走 §六的手动同步流程）；分叉身份由 `clean` 分支、README 横幅与本文件承载。
 
 目标：**完整保留状态条/用量统计/额度显示等功能，消灭一切未经显式同意的"自动行为"**——
 不向模型上下文注入任何文字、不自动修改客户端文件、不自动联网检查更新、不自动打引擎补丁。
@@ -9,9 +9,9 @@
 本目标已固化为仓库最高规范：[AGENTS.md](AGENTS.md) 首节「分叉最高原则：上下文零入侵」——
 对本仓库工作的任何人（含 AI 助手）具有约束力，与上游合并冲突时按该原则裁剪。
 
-## 一、改造清单（相对上游 v1.5.20）
+## 一、改造清单（相对上游 v1.5.21）
 
-| # | 行为 | 上游 v1.5.20 | clean 分叉 | 实现位置 |
+| # | 行为 | 上游 v1.5.21 | clean 分叉 | 实现位置 |
 |---|---|---|---|---|
 | 1 | SessionStart 未注入时自动安装（改 app.asar，恒开无开关） | 无条件自动装 | **不装**，仅 stderr 日志提示 `/install-overlay` | `overlay_install.py` `run_hook()` |
 | 2 | SessionStart 已注入时自动补渲染桥（改 asar 内 renderer 资产） | 每次会话自动补 | **不动**，补桥仅经显式安装命令 | 同上 |
@@ -51,7 +51,7 @@
 后者会还原全部客户端修改包括引擎补丁）。旧键 `plugin_auto_install_overlay` 与环境变量
 `ZUSAGE_PLUGIN_AUTO_INSTALL` 在上游 v1.5.7 起已失效，clean 分叉中无对应行为可开关。
 
-## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.20 增量）
+## 三、安全审计结论（v1.5.9 全量 2026-11-01 + v1.5.10~v1.5.21 增量）
 
 四个独立审计覆盖全部运行时代码（更新/加载器链、凭据与数据流向、安装/补丁链、渲染层载荷
 overlay.js），**均未发现恶意代码**；v1.5.10 增量（token_pricing 费用链、v208 更新红点、
@@ -115,6 +115,30 @@ dataBaseDir 两库仲裁、#307 store 缓存承诺、#309 心跳免深拷贝、#
 #321 诊断计数、#341 子代理回调修复——全部纯本地读/渲染修复。结论：
 **无新增默认开行为面、无新外发端点**（团队套餐端点属用户显式配置的查询域），
 改造表维持 12 项（第 10 项语义随上游 v339 重写）。
+
+**v1.5.21 增量（2026-11-19 复核，74 提交，重点审计 b917e45 手机远控中继）**：①**手机远控
+中继与统一桌面状态栏**（b917e45 + 后续 review 批）——上版预告的头号审计项，逐层复核结论
+**设计合格**：(a) asar 主 bundle 指纹锚点双注入（mobile_relay_patch.py：stash 捕获宿主
+`relayProtocol` 合法 send 入口 + `onRawTransportPayload` 包装分流 `zuUp` 帧）——机制镜像
+renderer_bridge 既有机器（剥尾缀 SHA256 校验/表外严格推导/integrity 重算/原子替换），补丁
+无人消费时零数据流；(b) 下行 `numericProjection` 纯数值投影，模型/工具名假名化
+（Model N/Tool N）、sid→agent-N、speed_segs 截 20，不转发标题/路径/正文；(c) 上行仅
+`zuCfg` 显示偏好（gen 单调幂等），**无命令执行面**；(d) 严格 opt-in：`mobile_relay.enabled`
+仅对象内显式布尔 true，disable 边沿丢弃队列与代际；(e) 目标信任链：唯一活跃桥 +
+trustedSender + 随机 binding 每次发送前复验（MOBILE_VERIFY_JS 再执行）；(f) 热修层
+`acceptUplink` 包裹 acceptPayload 与 asar 层双保险，关闭期帧被消费但不应用不排队。
+分叉处置：hook 路径不自动装 stash（ensure_mobile_relay_stash 只随 /install-overlay 显式链）；
+卸载增移除 stash（remove_mobile_relay_stash + 引擎补丁还原并列）；油猴脚本 URL 重定向
+本仓 `clean` 分支 raw（协议代际与分叉桌面端配套）。②**应用内重启交接**（issue #372：
+pending asar 改 quit-only + install_monitor 按请求文件拉起）——提权监控**裸启动**推导 exe、
+argv 全弃（注释明言防 --inspect-brk 提权链），任何校验不过删请求不拉起；③**#375 架构减负**
+（model-puller/quota/overlay/mobile 分片化 + build_puller/build_quota 构建门禁 + db_path 三端
+同源归一 + 防返工契约门禁）——纯重构，产物逐字节一致（model-puller/quota-client 与上游
+diff 为空）；④R4 Coder 额度源 + 宿主 3.18+ 新式登录态键回退（enc:v2 解密链，凭据仅内存）；
+⑤速度 Tooltip v384~v400 批（overlay 内部，无新权限面）；⑥ZCode 3.19.0 引擎指纹登记
+（Hue/xZo，3.18.2 降级锚点显式保留）。结论：**除①新增的可选中继通道（缺省关、数值投影、
+偏好上行）外，无新外发端点、无新注入/自动安装面**；改造表维持 12 项（mobile stash 归并
+#「仅显式链修改客户端文件」语义，不另立行）。
 
 **v1.5.20 增量（2026-11-16 复核，72 提交）**：①**sysmon 系统监控**（v356~369：主进程
 采样器 sysmon-client.cjs + 状态条格 + Tooltip 图标化 + 设置页重构）——本地读（性能计数器/
@@ -180,7 +204,25 @@ v375 速度列的 mobile 部分在 v1.5.20 tag 之后**（归下版）。结论�
     凭据仅驻内存；
   - 诊断文件 `diag-N.json` 含会话 id 摘要（本地，`diag:false` 可关），显式排除凭据类键。
 
-## 四、测试状态（2026-11-13，Windows 本机，v1.5.19 + v305 基线）
+## 四、测试状态（2026-11-19，Windows 本机，v1.5.21 + v305/v375 融合基线）
+
+- **v1.5.21 零回归证明**：Python 全量 fork 1283 项 2 失败 vs pristine v1.5.21 对照 1235 项
+  10 失败——fork 失败集（memory_db、WMI spawn）为对照失败集的**真子集**，fork-only 空。
+  Node 全量 fork 2344 项 97 失败 vs 对照 2342 项 97 失败，**失败清单名单级一致**
+  （fork-only 唯一一项 `multiple real holder processes` 多进程文件锁竞态为双侧瞬态，
+  双侧单文件重跑 19/19 绿）；全部为上游测试在 Windows 的既有环境性失败（git CLI/
+  POSIX/WMI/路径分隔符等）。分叉**零回归**。
+- **v1.5.21 新增分叉测试适配**（全部按改造表既有先例）：mobile_relay_install 4 用例
+  （hook 不自动装 stash/不写重启标记/兼容说明不进上下文，显式链用例保留上游形态）、
+  bridge_pending 4 用例（hook 不补桥——桥结果不进 hook 语义；真实 pending 链改由
+  ensure_renderer_bridge 显式入口驱动、生命周期断言全保留）、restart_notice/mobile 标记
+  1 用例（context 恒空串）、plugin_runtime 2 用例（notice_context 恒空 + vm 沙箱补
+  https/net/tls require）、mobile_userscript_build 3 用例（URL 期望从构建常量推导）、
+  mobile-userscript Node 2 用例 + overlay-settings ISSUES_URL（fork raw 地址）、
+  inject-mobile-bridge/git-status/git-multi/remote-recovery/plugin-loader 共 8 处 vm
+  harness 补 https/net/tls 直通与 process.env（fork 更新器代理层的测试适配面）。
+  另补一处历史缺口：test_bridge_pending 曾在早期 rebase 整文件取侧丢掉上游 #360
+  bounded_mkstemp 用例，本版恢复为上游 v1.5.21 原版（分叉 renderer_bridge 与上游零差异）。
 
 - **Python 全量**：1071 项中 1 失败（v1.5.19 基线；上游 v1.5.19 新增 17 用例：hot 节流/会话缓存/镜像回退等）。上游 v1.5.17/18 新增 96 用例：全部项目聚合、workflow 会话、token_rate db 覆盖、两库仲裁等）。唯一失败 `test_memory_db_no_cache_file_db_cached_with_ttl` 为上游新测试自身的 Windows 缺陷（临时目录内连接未关致 cleanup WinError 32，pristine 上游对照同样失败，双侧对称非分叉回归）。上游新断言「背景行注入文案」的 2 用例（token_rate_db_override）按分叉契约翻转为「恒不注入」（改造表 #5 纪律）。历史：v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958 → v1.5.18 1054 → v1.5.19 1071。v305 新增 `tests/test_incremental_perf.py` 17 项（v305 增量维护等价性：`_turn_rate_sql`≡`_turn_rate` 行形态全覆盖、速度轮表/今日行集/scan 增量若干轮（含运行中行翻转）后与全量重建一致、part 增量扫描含回执 UPDATE 与旧库无 time_updated 降级、项目范围探测放行/重算、代次账本只补差额/断代自愈/rowid 收缩自愈/内存库恒全量）。历史：v1.5.10 时 714 → v1.5.11 752 → v1.5.12 776 → v1.5.13/14 839 → v1.5.15 953 → v1.5.16 958。原版 v1.5.16 对照 935 中 9F（8 项既有 Windows 环境性 + 1 项双侧对称 WMI 负载竞态，单测重跑 3/3 绿，非分叉回归）。
 - **Node 全量**：分叉 1810 项 101 失败 vs pristine 上游 v1.5.19 对照 1809 项 101 失败，**失败清单逐字一致**（fork-only = ctl-only = 空集；分叉多 1 项为契约用例且通过），全部为上游测试在 Windows 的既有环境性失败。分叉**零回归**。分叉新增契约测试全绿：CDP 守卫 6 用例（缺省关矩阵）、引擎补丁源码契约、通道 compat 预判 2 用例、upgrade compat 4 用例重写、背景行恒不注入 2 用例（v1.5.18 翻转）。
@@ -292,6 +334,20 @@ v375 速度列的 mobile 部分在 v1.5.20 tag 之后**（归下版）。结论�
   静默换成上游正文（本轮首跑即误用，靠后续冲突里 HEAD 侧出现上游横幅文案检出，
   `git rebase --abort` 后重来）。版本对齐提交顺带清掉上游 v1.5.15 已删除的 Web 旁挂版
   全部文档引用（README×3 各 3 处）并把插件 README 新增 ByteRax 文档链接重定向到分叉。
+  v1.5.21 rebase 实录（2026-11-19）：29 个分叉提交一次重放（基线 aba185d → d827ec0，
+  上游 74 提交 +36k/-5k 行，含头号预告项 b917e45 手机远控中继与 #375 架构减负分片化）。
+  stop 分布：a50a624 基础提交 7 文件（README/manifests/config --theirs 链内自愈；
+  overlay_install 两 hunk 按意图——run_hook 取分叉零动作形态 + 卸载段双侧并取
+  remove_mobile_relay_stash；test_bridge_pending 取上游整文件（恢复 #360 历史缺口）；
+  test_plugin_runtime hunk 级融合）；redirect 提交 README.en/zh 直接落 clean-pre-v1521
+  终态；overlay 分片 06 每站「checkout v1.5.21 + 回放 4 行分叉门控文案」。
+  **教训（本次新踩，两起同根）**：①脚本化剥冲突标记时 marker 尾换行处理不当产生
+  「粘行」——shard 06 的分叉注释 `*/` 与上游 v189 日志行粘成一行，提前闭合 changelog
+  块注释致 overlay.js 语法坏，而 build_overlay 只拼接不解析、--check 双绿**静默带病**
+  （靠 python 三方逐行比对上游形态才检出，产物重建 2183540→2181780 字节）；②对比
+  脚本一侧名单未剥 `(0.4786ms)` 计时后缀，comm 全然失真（fork-only 虚高 118 项）。
+  防复发：shard 终态一律「上游整文件 + 整行替换回放」不再剥标记；名单比对先统一
+  `sed "s/ ([0-9.]*ms)$//"` 归一。
   v1.5.20 rebase 实录（2026-11-16）：22 个分叉提交（19 + 启动 ack 修复 + notes 镜像门 +
   渠道改造）一次重放（基线 fce5e2d → aba185d），stop 同前例（README/manifests --theirs；
   overlay 三件 --theirs 后按先例取 aba185d 形态重放三段门控文案重建——本次拦下 -4314 行

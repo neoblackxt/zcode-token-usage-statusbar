@@ -680,35 +680,21 @@ class OverlayBridgeNoticeTests(unittest.TestCase):
         return outcome, stdout.getvalue()
 
     def test_run_hook_reports_permission_but_not_pending_or_other_errors(self):
-        # v172：桥 pending（客户端退出后监控自动收尾）本身不发会话文字；推送开关
-        # 未开启（缺省）时 mobile 侧对 bridge pending 延后也静默（issue #455）。
-        pending = {"status": "pending", "version": "3.16.2", "detail": ""}
-        outcome, stdout = self.hook_output(pending)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        # 开关开启时：mobile 侧对 bridge pending 延后提示等待收尾后自动补装（不给手动命令）
-        config = self.runtime / "config.json"
-        config.write_text('{"mobile_relay": {"enabled": true}}', encoding="utf-8")
-        outcome, stdout = self.hook_output(pending)
-        config.unlink()
-        self.assertIn("自动补装", outcome["systemMessage"])
-        self.assertEqual(stdout, "")
-        # v258：SessionStart 自动链（quiet_hook=True）且注入行在位时，桥缺席/打不上
-        # 静默放行——fiber 兜底 + 渲染端运行时合成桥接手，DB 轮询保底；受保护目录
-        # 权限不再向会话注入提权打扰（stderr 诊断行仍在）。
-        denied = {"status": "skipped-error", "version": None,
-                  "detail": "[WinError 5] 拒绝访问", "permission": True}
-        outcome, stdout = self.hook_output(denied, writable=True)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        unknown = {"status": "skipped-unknown", "version": "9.9.9", "detail": "unregistered asset"}
-        outcome, stdout = self.hook_output(unknown)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        # 无权限标记的普通失败仍走 stderr 静默（版本不识别等），不打扰用户
-        plain = dict(denied); plain.pop("permission")
+        # clean 分叉反转：hook 不补桥——桥结果不进 hook 语义，四种桥结果下
+        # （pending/权限拒绝/未知版本/普通失败）hook 恒 {"suppressOutput": True}，
+        # stdout 纯净；桥缺席由运行时动态桥 + DB 轮询兜底，兼容性说明走 ⚙ 与 stderr。
+        for bridge_result in (
+            {"status": "pending", "version": "3.16.2", "detail": ""},
+            {"status": "skipped-error", "version": None,
+             "detail": "[WinError 5] 拒绝访问", "permission": True},
+            {"status": "skipped-unknown", "version": "9.9.9", "detail": "unregistered asset"},
+        ):
+            outcome, stdout = self.hook_output(bridge_result)
+            self.assertEqual(outcome, {"suppressOutput": True})
+            self.assertEqual(stdout, "")
+        plain = {"status": "skipped-error", "version": None, "detail": "boom"}
         outcome, stdout = self.hook_output(plain)
-        self.assertNotIn("systemMessage", outcome)
+        self.assertEqual(outcome, {"suppressOutput": True})
         self.assertEqual(stdout, "")
 
     def test_bridge_permission_notice_kept_for_explicit_cli(self):
@@ -840,16 +826,16 @@ class PendingInstallWaitingTests(unittest.TestCase):
         return outcome
 
     def test_pending_hint_keeps_no_retry_promise_on_writable_target(self):
+        # clean 分叉反转：未注入时 hook 不自动安装——pending 提示链（含「无需重试」
+        # 承诺）只属于 /install-overlay 显式链；hook 恒 {"suppressOutput": True}。
         outcome = self.hook(writable=True)
-        self.assertIn("无需重试安装", outcome["systemMessage"])
+        self.assertEqual(outcome, {"suppressOutput": True})
 
     def test_pending_hint_on_protected_target_demands_elevated_rerun(self):
+        # clean 分叉反转：受保护目录同样不触发 hook 提权指引；提权重跑提示只在
+        # /install-overlay CLI 失败输出里给出，hook 无 systemMessage。
         outcome = self.hook(writable=False)
-        message = outcome["systemMessage"]
-        self.assertNotIn("无需重试安装", message)
-        self.assertIn("管理员" if os.name == "nt" else "sudo", message)
-        self.assertIn("overlay_install.py", message)
-        self.assertIn("install", message)
+        self.assertEqual(outcome, {"suppressOutput": True})
 
 
 class RealHookChainTests(unittest.TestCase):
@@ -917,12 +903,17 @@ class RealHookChainTests(unittest.TestCase):
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
                 outcome = self.installer.run_hook()
+        # clean 分叉反转：hook 不补桥——不经 hook 建待收尾包、不拉监控、不写标记。
         self.assertEqual(stdout.getvalue(), "", "hook stdout 只能是 hook JSON")
-        # 桥 publish pending → mobile 延后（detail=bridge pending）：推送开关未开启
-        # （缺省）时整条会话静默（issue #455）——重启需求由下方 ⚙ 红点标记承载。
-        # 开启开关后「提示等待自动补装、不含手动命令」的对照已移到
-        # tests/test_mobile_relay_install.py 的 hook 链用例（同为真实 pending 链）
-        self.assertNotIn("systemMessage", outcome)
+        self.assertEqual(outcome, {"suppressOutput": True})
+        self.assertFalse(self.pi.TMP.is_file())
+        self.pi.launch_monitor.assert_not_called()
+        self.assertFalse((self.runtime / ".plugin-restart-required").exists())
+        # 显式链（/install-overlay → ensure_renderer_bridge）仍完整走真实 pending 链
+        # （就地替换被拒 → TMP 待收尾；replace 拒绝补丁对本段调用重新生效）：
+        with mock.patch.object(bridge.os, "replace", side_effect=replace_refused),                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            outcome = self.installer.ensure_renderer_bridge(self.pi, quiet_monitor=True)
+        self.assertEqual(outcome["status"], "pending")
         self.assertTrue(self.pi.TMP.is_file())
         self.assertEqual(self.pi.pending_tmp(operation="install")["operation"], "install")
         self.pi.launch_monitor.assert_called_once()
@@ -1023,22 +1014,18 @@ class SudoHintWindowsTests(unittest.TestCase):
             self.assertEqual(bridge.remove_deployed(asar_path)["status"], "skipped-unknown")
 
     def test_lock_denied_with_failing_readonly_inspect_keeps_permission_flag(self):
-        # 权限信号不被吞（issue #67 场景 1）。锁窗口改造后 ensure 的只读判定前移到
-        # 锁外：判定自身 PermissionError（读拒/TCC/ACL）保留 permission 标记供提权
-        # 指引；解析类失败（坏 asar）与权限无关，不得虚报。remove 链仍在锁内判定，
-        # 锁拒绝 + 只读检查失败按原语义上抛保标记。
+        # 锁失败后只读检查自身出错（坏 asar、读档异常）时，无法证明无需写盘：
+        # 按锁失败原语义上报 skipped-error 并保留 permission 标记供提权指引，
+        # 不得落入无标记的通用错误分支（issue #67 场景 1）。
         import runtime_lock
         asar_path = self.root / "app.asar"
-        with mock.patch.object(bridge, "_inspect_deploy",
-                               side_effect=PermissionError(5, "read denied")):
+        with mock.patch.object(runtime_lock, "file_lock",
+                               side_effect=PermissionError(5, "lock denied")), \
+                mock.patch.object(bridge, "_inspect_deploy",
+                                  side_effect=bridge.BridgeError("bad archive")):
             denied = bridge.ensure_deployed(asar_path)
         self.assertEqual(denied["status"], "skipped-error")
         self.assertIs(denied.get("permission"), True)
-        with mock.patch.object(bridge, "_inspect_deploy",
-                               side_effect=bridge.BridgeError("bad archive")):
-            bad = bridge.ensure_deployed(asar_path)
-        self.assertEqual(bad["status"], "skipped-error")
-        self.assertNotIn("permission", bad)
         with mock.patch.object(runtime_lock, "file_lock",
                                side_effect=PermissionError(5, "lock denied")), \
                 mock.patch.object(bridge, "_inspect_remove",
