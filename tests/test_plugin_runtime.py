@@ -799,7 +799,8 @@ class PluginRuntimeTests(unittest.TestCase):
                 digest = self.digest(self.runtime / name)
                 self.assertEqual(marker["hashes"], {name: digest})
                 self.assertEqual(self.record()["hashes"][name], digest)
-                self.assertIn("用户可见·重启提醒", notice_context(self.runtime))
+                # clean 分叉：提醒只走红点/UI 通道，context 恒空串（零上下文注入）
+                self.assertEqual(notice_context(self.runtime), "")
                 self.assertFalse(runtime_lock.ack_restart(self.runtime, {
                     "_loadedAt": marker["createdAt"] * 1000 - 1, name: digest,
                 })["cleared"])
@@ -1190,7 +1191,8 @@ const sandbox = { __dirname: runtime, console: { error() {} },
   setInterval: (fn, ms) => intervals.push({ fn, ms }), setTimeout: () => 1, clearTimeout() {},
   require(id) {
     if (id === "fs") return Object.assign({}, fs, { watch: () => ({ on() {} }) });
-    if (["path", "url", "crypto"].includes(id)) return require(id);
+    // clean 分叉：inject-main 顶部还 require https/net/tls（更新器代理隧道修复）
+    if (["path", "url", "crypto", "https", "net", "tls"].includes(id)) return require(id);
     if (id === "child_process") return { execFile: (a,b,c,cb) => cb(null), spawn() { throw Error("unexpected spawn"); } };
     if (id === "electron") return { app: { getPath: () => runtime, on() {} }, webContents: { getAllWebContents: () => windows }, ipcMain: { on() {} } };
     if (id === "./plugin-updater.cjs") return { createUpdater: () => ({ status: () => ({}), tick: async () => {}, request: async () => {} }) };

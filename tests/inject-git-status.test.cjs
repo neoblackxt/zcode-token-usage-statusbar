@@ -34,7 +34,7 @@ function loadPump(respond = () => ({})) {
     setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
     require(name) {
       if (name === "fs") return mockFs;
-      if (["path", "url", "crypto"].includes(name)) return require(name);
+      if (["path", "url", "crypto", "https", "net", "tls"].includes(name)) return require(name);   // clean 分叉：inject-main 顶部更新器代理隧道 require
       if (name === "electron") return { app: { getPath: () => "/fixture/home", on() {} }, webContents: { getAllWebContents: () => windows }, ipcMain: ipc };
       if (name === "child_process") return {
         spawn() {
@@ -326,7 +326,7 @@ function loadPumpIpc() {
     setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; },
     require(name) {
       if (name === "fs") return mockFs;
-      if (["path", "url", "crypto"].includes(name)) return require(name);
+      if (["path", "url", "crypto", "https", "net", "tls"].includes(name)) return require(name);   // clean 分叉：inject-main 顶部更新器代理隧道 require
       if (name === "electron") return { app: { getPath: () => "/fixture/home", on() {} }, webContents: { getAllWebContents: () => windows }, ipcMain: ipc };
       if (name === "child_process") return {
         spawn() {

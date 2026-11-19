@@ -87,9 +87,11 @@ class MobileInstallTests(unittest.TestCase):
              mock.patch.dict(sys.modules, {"plugin_auto_update": mock.Mock()}), \
              contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()):
             result = self.installer.run_hook()
+        # clean 分叉反转：hook 不动客户端文件——遗留 mobile 注入原样保留（v1 代际），
+        # 升级只走 /install-overlay 显式链（见 test_explicit_plugin_install_upgrades_legacy）。
         self.assertEqual(out.getvalue(), "")
-        self.assertNotIn("systemMessage", result)
-        self.assertEqual(mobile.check_deployed(self.target)["uplink_generation"], 2)
+        self.assertEqual(result, {"suppressOutput": True})
+        self.assertEqual(mobile.check_deployed(self.target)["uplink_generation"], 1)
         self.assertTrue(self.pi.self_check(self.target, expect=True))
 
     def test_locked_target_defers_second_patch_until_next_session(self):
@@ -257,10 +259,9 @@ class MobileInstallTests(unittest.TestCase):
                 ):
                     stack.enter_context(patcher)
                 result = self.installer.run_hook()
-                self.assertIn("99.0.0", result["systemMessage"])
-                self.assertIn("99.0.0", result["hookSpecificOutput"]["additionalContext"])
-                self.assertIn("兼容性提醒", result["hookSpecificOutput"]["additionalContext"])
-                self.assertNotIn("手机中继补丁尚未就绪", result["systemMessage"])
+                # clean 分叉反转：兼容性说明不进模型上下文（_notify_compat_once 不接线，
+                # 分叉承载是 ⚙ 齿轮与 stderr）；两条 hook 路径恒 {"suppressOutput": True}。
+                self.assertEqual(result, {"suppressOutput": True})
 
     def test_mobile_notice_preserves_existing_output_or_reports_deferral(self):
         existing = {"hookSpecificOutput": {"additionalContext": "original"}}
@@ -273,7 +274,8 @@ class MobileInstallTests(unittest.TestCase):
         self.assertIn("完全退出", message)
         self.assertIn("mobile_relay_patch.py", message)
         self.assertIn("apply --asar", message)
-        self.assertIn("手机中继补丁尚未就绪", output["hookSpecificOutput"]["additionalContext"])
+        # clean 分叉：提醒只走 systemMessage（UI 通道），恒不写 hookSpecificOutput
+        self.assertNotIn("hookSpecificOutput", output)
 
     def test_standalone_remove_clears_mobile_injection(self):
         with mock.patch.object(sys, "argv", ["install.py", "--remove", "--asar", str(self.target),
@@ -343,13 +345,10 @@ class MobileInstallTests(unittest.TestCase):
                 mock.patch.dict(sys.modules, {"plugin_auto_update": mock.Mock()}), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             result = self.installer.run_hook()
-        marker = json.loads((self.runtime / ".plugin-restart-required").read_text(encoding="utf-8"))
-        self.assertEqual(marker["state"], "installed")
-        self.assertIs(marker.get("asarPatch"), True)
-        self.assertEqual(marker.get("hashes"), {})
-        self.assertNotIn("installation", marker)
-        self.assertNotIn("publishedAt", marker)
-        self.assertNotIn("systemMessage", result)
+        # clean 分叉反转：hook 不打 mobile 补丁、不写重启标记——installed 标记只随
+        # 显式安装链产生（见 test_plugin_install_records_restart_marker_while_client_runs）。
+        self.assertFalse((self.runtime / ".plugin-restart-required").exists())
+        self.assertEqual(result, {"suppressOutput": True})
 
     def test_plugin_install_records_restart_marker_while_client_runs(self):
         with mock.patch.object(self.pi, "client_running", return_value=True), \

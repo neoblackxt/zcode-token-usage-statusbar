@@ -27,8 +27,8 @@ DEBUG_DESC_REPL = (
     "// @description  调试版：默认显示排障面板（帧统计/overlay 加载状态）；日常使用请安装正式版 zusage-mobile.user.js",
 )
 DEBUG_URL_REPL = (
-    "https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js",
-    "https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.debug.user.js",
+    "https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.user.js",
+    "https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.debug.user.js",
 )
 
 

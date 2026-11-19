@@ -17,8 +17,8 @@ META = (
     "// ==UserScript==\n"
     "// @name         ZCode 用量状态条（远控中继接收端）\n"
     "// @description  在 ZCode Web 远程控制页面渲染 token 用量；仅在确认宿主支持后同步显示偏好\n"
-    "// @downloadURL  https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js\n"
-    "// @updateURL    https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js\n"
+    "// @downloadURL  https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.user.js\n"
+    "// @updateURL    https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.user.js\n"
     "// ==/UserScript==\n"
 )
 MOBILE = META + "var DEBUG_BUILD = __ZM_DEBUG__;\nvar OVERLAY_CODE = __ZM_OVERLAY_SOURCE__;\n"
@@ -69,11 +69,12 @@ class MobileUserscriptBuildTests(unittest.TestCase):
         self.assertEqual(normalized_debug, release)
 
     def test_variants_keep_distinct_install_and_update_urls(self):
+        # clean 分叉：期望 URL 从构建脚本常量推导（fork 指向 clean 分支 raw 地址），
+        # 不再硬编码上游 main 地址。
         common, _ = self.mod.assemble()
-        for debug, filename in ((False, "zusage-mobile.user.js"), (True, "zusage-mobile.debug.user.js")):
+        for debug, expected in ((False, self.mod.DEBUG_URL_REPL[0]), (True, self.mod.DEBUG_URL_REPL[1])):
             source = self.mod.finalize(common, debug)
             header = source.split("// ==/UserScript==", 1)[0]
-            expected = "https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/" + filename
             for key in ("downloadURL", "updateURL"):
                 lines = [line for line in header.splitlines() if line.startswith("// @" + key)]
                 self.assertEqual(len(lines), 1)

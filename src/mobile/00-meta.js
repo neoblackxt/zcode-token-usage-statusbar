@@ -3,8 +3,8 @@
 // @namespace    zusage-mobile
 // @version      0.1.0
 // @description  在 ZCode Web 远程控制页面渲染 token 用量；仅在确认宿主支持后同步显示偏好
-// @downloadURL  https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js
-// @updateURL    https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js
+// @downloadURL  https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.user.js
+// @updateURL    https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.user.js
 // @match        https://zcode.z.ai/remote/*
 // @run-at       document-start
 // @grant        none

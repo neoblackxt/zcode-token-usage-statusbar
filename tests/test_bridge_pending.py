@@ -452,27 +452,21 @@ class OverlayBridgeNoticeTests(unittest.TestCase):
         return outcome, stdout.getvalue()
 
     def test_run_hook_reports_permission_but_not_pending_or_other_errors(self):
-        # v172：桥 pending（客户端退出后监控自动收尾）不再发会话文字。
-        pending = {"status": "pending", "version": "3.16.2", "detail": ""}
-        outcome, stdout = self.hook_output(pending)
-        self.assertIn("尚未就绪", outcome["systemMessage"])
-        self.assertEqual(stdout, "")
-        # v258：SessionStart 自动链（quiet_hook=True）且注入行在位时，桥缺席/打不上
-        # 静默放行——fiber 兜底 + 渲染端运行时合成桥接手，DB 轮询保底；受保护目录
-        # 权限不再向会话注入提权打扰（stderr 诊断行仍在）。
-        denied = {"status": "skipped-error", "version": None,
-                  "detail": "[WinError 5] 拒绝访问", "permission": True}
-        outcome, stdout = self.hook_output(denied, writable=True)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        unknown = {"status": "skipped-unknown", "version": "9.9.9", "detail": "unregistered asset"}
-        outcome, stdout = self.hook_output(unknown)
-        self.assertNotIn("systemMessage", outcome)
-        self.assertEqual(stdout, "")
-        # 无权限标记的普通失败仍走 stderr 静默（版本不识别等），不打扰用户
-        plain = dict(denied); plain.pop("permission")
+        # clean 分叉反转：hook 不补桥——桥结果不进 hook 语义，四种桥结果下
+        # （pending/权限拒绝/未知版本/普通失败）hook 恒 {"suppressOutput": True}，
+        # stdout 纯净；桥缺席由运行时动态桥 + DB 轮询兜底，兼容性说明走 ⚙ 与 stderr。
+        for bridge_result in (
+            {"status": "pending", "version": "3.16.2", "detail": ""},
+            {"status": "skipped-error", "version": None,
+             "detail": "[WinError 5] 拒绝访问", "permission": True},
+            {"status": "skipped-unknown", "version": "9.9.9", "detail": "unregistered asset"},
+        ):
+            outcome, stdout = self.hook_output(bridge_result)
+            self.assertEqual(outcome, {"suppressOutput": True})
+            self.assertEqual(stdout, "")
+        plain = {"status": "skipped-error", "version": None, "detail": "boom"}
         outcome, stdout = self.hook_output(plain)
-        self.assertNotIn("systemMessage", outcome)
+        self.assertEqual(outcome, {"suppressOutput": True})
         self.assertEqual(stdout, "")
 
     def test_bridge_permission_notice_kept_for_explicit_cli(self):
@@ -604,16 +598,16 @@ class PendingInstallWaitingTests(unittest.TestCase):
         return outcome
 
     def test_pending_hint_keeps_no_retry_promise_on_writable_target(self):
+        # clean 分叉反转：未注入时 hook 不自动安装——pending 提示链（含「无需重试」
+        # 承诺）只属于 /install-overlay 显式链；hook 恒 {"suppressOutput": True}。
         outcome = self.hook(writable=True)
-        self.assertIn("无需重试安装", outcome["systemMessage"])
+        self.assertEqual(outcome, {"suppressOutput": True})
 
     def test_pending_hint_on_protected_target_demands_elevated_rerun(self):
+        # clean 分叉反转：受保护目录同样不触发 hook 提权指引；提权重跑提示只在
+        # /install-overlay CLI 失败输出里给出，hook 无 systemMessage。
         outcome = self.hook(writable=False)
-        message = outcome["systemMessage"]
-        self.assertNotIn("无需重试安装", message)
-        self.assertIn("管理员" if os.name == "nt" else "sudo", message)
-        self.assertIn("overlay_install.py", message)
-        self.assertIn("install", message)
+        self.assertEqual(outcome, {"suppressOutput": True})
 
 
 class RealHookChainTests(unittest.TestCase):
@@ -681,8 +675,17 @@ class RealHookChainTests(unittest.TestCase):
             stdout = io.StringIO()
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
                 outcome = self.installer.run_hook()
+        # clean 分叉反转：hook 不补桥——不经 hook 建待收尾包、不拉监控、不写标记。
         self.assertEqual(stdout.getvalue(), "", "hook stdout 只能是 hook JSON")
-        self.assertIn("尚未就绪", outcome["systemMessage"])
+        self.assertEqual(outcome, {"suppressOutput": True})
+        self.assertFalse(self.pi.TMP.is_file())
+        self.pi.launch_monitor.assert_not_called()
+        self.assertFalse((self.runtime / ".plugin-restart-required").exists())
+        # 显式链（/install-overlay → ensure_renderer_bridge）仍完整走真实 pending 链
+        # （就地替换被拒 → TMP 待收尾；replace 拒绝补丁对本段调用重新生效）：
+        with mock.patch.object(bridge.os, "replace", side_effect=replace_refused),                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            outcome = self.installer.ensure_renderer_bridge(self.pi, quiet_monitor=True)
+        self.assertEqual(outcome["status"], "pending")
         self.assertTrue(self.pi.TMP.is_file())
         self.assertEqual(self.pi.pending_tmp(operation="install")["operation"], "install")
         self.pi.launch_monitor.assert_called_once()
