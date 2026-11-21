@@ -33,6 +33,7 @@
 - Python 用例落在 `if __name__ == "__main__":` 死区时 discover 不执行=假绿灯，跑完用 `-v` 确认测试名出现。
 - 模拟渠道链路不能用插件 `fetchBytes` 拉 raw.githubusercontent（白名单不含；真实链路由宿主 CLI 拉）。
 - asar 资产提取用 `patch_install.read_header/iter_files`，勿手写解包（头 12–16 字节 LE JSON 长度、数据基址 16+json_len 对齐、offset 相对基址）。
+- VM 切片 ctx 的同名桩会掩盖真实页面错误（上游 v417 沉淀，本分叉同病同修）：给 ctx 注入与源码同名变量（如 `panel`/`gear`）后用例断言的是桩调用，而真实页面里该名字越出作用域只会抛 `ReferenceError` 且被事件分发语义吞掉——测试全绿但功能静默失效（先例：增强历史「设置」按钮 v350 起失效，上游 v417 `__zuOpenEnhSettings` 钩子修复、本分叉同轮 `__zuInstApi` 修复随上游收编）。harness 只注入真实作用域存在的名字，排查「点击没反应」先从 harness 删桩。配套分片作用域契约：`01-*` 等文档级壳层代码只有 IIFE 级名字，`panel`/`gear`/`activateSettingsSec` 等是 `spawnInstance` 闭包私有；壳层要回调实例功能走入口 DOM 钩子模式（实例侧把闭包函数挂到入口元素、壳层沿入口元素分发，先例 `chip.__zuOpenSub`/`__zuOpenEnhSettings`；复用旧节点时每拍刷新钩子并在函数体内做 inactive 自卫）。
 - 长期红的测试等于没有测试；断言按域拆分分开报错，不让一个失配域掩盖另一域的新回归。
 - 同一契约串可能被多个测试文件分别断言（先例：一条 `.zu-git-sep` 样式规则锁三处）——改共享样式/协议串前先 `grep -rn "<串名>" tests/` 全量找锁定点，别只改先撞见的那处。
 - 依赖本机环境的测试（`skipUnless(真机存在)`、读已安装客户端）不算守卫：同一不变量必须有不依赖本机状态的隔离等价测试，变异验证也要在「真机不可用」条件下再跑一遍。先例：桥遗留代际识别曾只被「本机 asar 里恰好部署着旧桥」的真机测试守着，本机桥一升级（SessionStart 自动打桥）它就不再覆盖，去掉 V1/V2 识别、误改遗留模板正文的变异全部通过（`BridgeGenerationTests` 补上）。报告「skipped=N」时说出是哪几个、跳过原因，以及它们让哪个平台/路径零覆盖。
