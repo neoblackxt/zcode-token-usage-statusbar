@@ -80,6 +80,7 @@
 ## 7. 打包与发布
 
 - 本地同步 ≠ 打包 ≠ 校验 ≠ 发布预演 ≠ 提交/tag/Release/渠道推送；源码改版、正式渠道发布、用户安装副本升级是不同步骤。
+- **`plugin-releases` 渠道分支是孤儿单文件分支**（2026-11-23 重构）：只有根 `marketplace.json` 一个文件，宿主按 ref 只读它（source 指向 Release ZIP 资产）。不要从 `clean`/源码树建渠道提交（上游同分支是全快照形态，那是沿袭不是必需——436 个残留文件在消费链零参与）；每次发版在孤儿分支上改 `version`/`url`/`sha256` 三处即可，清单保持 i18n/icon 完整形态。
 - 两份 `plugin.json` 与根 `marketplace.json` 的插件身份/版本须一致；正式渠道清单是生成的 `marketplace-release.json`，不要覆盖源码市场入口。`release_tool.py build` 的输出目录须尚不存在，包只含枚举分发文件；`verify` 校验身份、文件集、SHA256 与安全解包。
 - `publish --dry-run` 不是离线检查：仍有 GitHub 只读 preflight，要求已提交源码、本地/远端 tag 与目标提交一致、Release 不存在及非空 UTF-8 更新说明；预演不授予发布权限。`publish --gitcode-repo`（需 `GITCODE_TOKEN`）在 GitHub 发布验收后生成 `plugin-releases-gitcode` 清单与同 tag 资产，镜像上须先有同一个 tag 且指向发布提交（创建 Release 的请求不带 `target_commitish`，见发布技能的 GitCode tag 闸门）；GitCode 段认证未配置时该段失败属预期，不代表 GitHub 段失败。
 - 覆盖/删除已有 Release 需用户明确指令，删除前 `gh release view --json body,assets` 存快照。`--publish`/`--confirm` 是工具安全门不是授权替代；提交、推送、tag、Release、渠道写入按当前明确授权执行。
