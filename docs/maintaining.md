@@ -164,7 +164,7 @@ GitCode 渠道的清单 URL 形状、下载主机白名单（`gitcode.com`/`file
 
 ### 仓库改名
 
-更新器已预埋改名迁移（契约见 [install-release.md §6](../.zcode/rules/install-release.md)）：改名后老用户的更新检查在旧名路径上遇到来源校验失败时，会向 GitHub 询问仓库当前名（API 的 `full_name`，兜底看网页 301 重定向）并按新名重查。**只有已升级到含该能力版本、且该版本已在主进程里生效的用户受益**，所以顺序不能颠倒。第 2–6 步里的 GitHub 改名、提交、推送、发布 Release 与渠道写入都是外部写操作，须逐项取得**当前明确授权**（AGENTS.md §8），AI 助手不得把本节当作授权代为执行：
+更新器已预埋改名迁移（契约由 `tests/plugin-release-updater.test.cjs` 锁定）：改名后老用户的更新检查在旧名路径上遇到来源校验失败时，会向 GitHub 询问仓库当前名（API 的 `full_name`，兜底看网页 301 重定向）并按新名重查。**只有已升级到含该能力版本、且该版本已在主进程里生效的用户受益**，所以顺序不能颠倒。第 2–6 步里的 GitHub 改名、提交、推送、发布 Release 与渠道写入都是外部写操作，须逐项取得**当前明确授权**（AGENTS.md §8），AI 助手不得把本节当作授权代为执行：
 
 
 1. 先发布含迁移能力的版本，等老用户普遍升级**并重启过一次 ZCode** 后再改名：迁移代码在 `plugin-updater.cjs`、`plugin-release.cjs` 两个主进程子模块里（不是 `inject-main.cjs`）：运行 v258 以后加载器的客户端会在轮询周期内热换，更早的在野加载器与 `hot_reload:false` 用户要完全退出重开才生效。仓库没有遥测，可参考该版本 Release 资产下载量与近期 Issue 反馈判断普及度；停在更早版本的用户改名后只能按[用户指南](user-guide.md#切换已有市场到正式渠道)手动切换同名市场来源。
@@ -181,9 +181,9 @@ GitCode 渠道的清单 URL 形状、下载主机白名单（`gitcode.com`/`file
 4. **必须在 build 之前**更新仓库内的旧名并提交：`marketplace.json`、两份 `plugin.json`、插件目录 `README.md`、`overlay.js` 都在发布 ZIP 里，而 `release_tool.py publish` 的 preflight 要求 ZIP 与 HEAD 源码逐字节一致：构建之后再改这些文件会被拒绝（`ZIP is not the current repository source`）；不改就发布，则包里的文件仍是旧名。以 `git grep -n -i 'byterax'` 为准（大小写不敏感：技能测试里有 `bytERAX` 变体；owner 级提及无需改），已知位置：
    - 两份 `plugin.json` 的 `homepage`/`repository`；根 `marketplace.json` 的 `plugins[0].icon`（jsdelivr 地址不保证跟随 GitHub 重定向，须改新名；`owner.url` 是 owner 级地址，只改仓库名时不用动）。已分发的旧渠道清单与宿主缓存里的 icon 仍是旧名，CDN 缓存过期后可能 404，只影响图标外观；`docs/promo/icon.webp` 的路径与文件名冻结，不要为此移动文件。
    - 三份根 README（含 star-history 徽章，只在这三份里）、插件目录下的 `README.md`（随 ZIP 分发）与 `README_CN.md`（不随 ZIP 分发，但同样要改）、`docs/` 里的安装命令与链接。
-   - `docs/promo/*.html` 与 `docs/promo/social-copy.md`：改完按 [docs.md §3](../.zcode/rules/docs.md) 用 `docs/promo/shoot.py` 重新导出 promo 图。
-   - 浮层「反馈问题」链接：`src/overlay/09-instance-settings-and-notes.js` 的 `issuesUrl`。这是 overlay 变更，按 [repo-workflow.md §2](../.zcode/rules/repo-workflow.md) 的惯例升 `VERSION` 并补台账，改完经 `sync_plugin.py` 重新拼出 `overlay.js` 与插件副本。
-   - 项目技能里写死的仓库：`.zcode/skills/zcode-issue-pr-resolver/scripts/triage.py` 的 `REPO` 及其测试与文档；`.zcode/rules/repo-workflow.md` 里的仓库地址与 `gh api` 命令。
+   - `docs/promo/*.html` 与 `docs/promo/social-copy.md`：改完用 `docs/promo/shoot.py` 重新导出 promo 图。
+   - 浮层「反馈问题」链接：`src/overlay/09-instance-settings-and-notes.js` 的 `issuesUrl`。这是 overlay 变更，按惯例升 `VERSION` 并补台账，改完经 `sync_plugin.py` 重新拼出 `overlay.js` 与插件副本。
+   - 项目技能里写死的仓库：`.zcode/skills/zcode-issue-pr-resolver/scripts/triage.py` 的 `REPO` 及其测试与文档；AGENTS.md 与技能文档里的仓库地址与 `gh api` 命令。
    - 测试：只改**断言当前真实地址**的（如 `tests/test_plugin_contract.py` 的 icon 断言、`tests/overlay-settings.test.cjs` 的 `ISSUES_URL`）；`tests/plugin-release.test.cjs` 的 `OLD_REPO`、`tests/plugin-release-updater.test.cjs` 的 `REPOSITORY`/`RENAMED` 等**改名夹具刻意保留旧名或占位名**，批量替换会让改名用例变红。
    - 官方市场收录 PR 的 source 同样要改。
 

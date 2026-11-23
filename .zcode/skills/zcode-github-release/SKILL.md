@@ -8,7 +8,7 @@ description: "仅为当前 zcode-token-usage-statusbar 项目发版：检查、�
 ## 确认项目、仓库与授权
 
 - 本技能仅供所在仓库使用。以本技能目录向上三级得到项目根目录，验证该目录与 `git rev-parse --show-toplevel` 一致，且有 `marketplace.json`、`sync_plugin.py`、`release_tool.py`、`release_unpack.py` 和 `plugins/zcode-token-usage-statusbar/`。不要在其它项目或已安装插件缓存执行发布。
-- 阅读 `AGENTS.md` §3（同步与冷文件）、§8（发布与外部操作边界），§8 指向的 [发布链规则](../../rules/install-release.md)（§6 更新器与渠道、§7 打包与发布），以及 [开发与发布](../../../docs/maintaining.md#发布插件)。检查 `git status`、当前分支与 `git remote -v`，保留未提交及其它会话改动。
+- 阅读 `AGENTS.md` §3（同步与冷文件）、§8（发布与外部操作边界），以及 [开发与发布](../../../docs/maintaining.md#发布插件)。检查 `git status`、当前分支与 `git remote -v`，保留未提交及其它会话改动。
 - 发布目标 `owner/repo` 由用户在授权中点明。本项目历次发布目标都是 `fork` 远程指向的 ByteRax 仓库；`origin`（xhwxt 上游）只读，不默认选它，也不因另一仓库有权限就切换。用 `gh repo view OWNER/REPO --json viewerPermission,defaultBranchRef` 核验权限与默认分支；目标只读则报告阻塞。
 - 仅正式三段版本 `X.Y.Z`、tag `vX.Y.Z`，不将截图托管 Release 或开发分支提交当作正式版本。涨哪一位由用户决定，只在用户要求时修改版本，不顺手修其它代码。合同细节见 [发布包合同](references/release-contract.md)。
 

@@ -1,5 +1,8 @@
 # 沉淀模板、分层落点示例与增量状态约定
 
+> **clean 分叉覆盖**：`.zcode/rules/` 已废弃（根 `AGENTS.md` §0 唯一事实来源）。本文档的 rules 路径映射不再适用——沉淀一律落根 `AGENTS.md` 对应章节；遇上游修改 `.zcode/rules/` 的 rebase 提交按删除态解决。
+
+
 本文档定义 `distill-project-memory` 在写入 `.zcode/rules/*.md`、根 `AGENTS.md`、`specs/*.md` 或 `docs/*.md` 时的写法规范与本地状态格式。遵循目标项目的标点、术语与排版风格，不机械填空。
 
 ## 1. 分层落点速查（以本仓库及 ZCode 规范为准）
