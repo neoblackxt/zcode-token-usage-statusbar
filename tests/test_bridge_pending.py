@@ -911,7 +911,8 @@ class RealHookChainTests(unittest.TestCase):
         self.assertFalse((self.runtime / ".plugin-restart-required").exists())
         # 显式链（/install-overlay → ensure_renderer_bridge）仍完整走真实 pending 链
         # （就地替换被拒 → TMP 待收尾；replace 拒绝补丁对本段调用重新生效）：
-        with mock.patch.object(bridge.os, "replace", side_effect=replace_refused),                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        with mock.patch.object(bridge.os, "replace", side_effect=replace_refused), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             outcome = self.installer.ensure_renderer_bridge(self.pi, quiet_monitor=True)
         self.assertEqual(outcome["status"], "pending")
         self.assertTrue(self.pi.TMP.is_file())

@@ -31,7 +31,7 @@
 通过客户端界面操作，无需系统 PATH 中有 `zcode`：
 
 1. 打开 **设置 → 插件 → 添加插件市场**；某些版本入口在「发现」页的 **+**。
-2. 输入 `https://github.com/ByteRax/zcode-token-usage-statusbar#plugin-releases`，添加市场。
+2. 输入 `https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases`，添加市场。
 3. 找到 **ZCode Token Usage Statusbar**，安装到用户范围并启用。
 
 GitHub 访问受限时，第 2 步改用 GitCode 渠道地址（结尾 `.git` 不能省，本机需装有 Git）：
@@ -80,7 +80,7 @@ Windows 找不到 `python3` 时插件 hook 会自动回退：hook 命令按 `pyt
 
 ### 正式 Release 渠道
 
-[`plugin-releases` 分支](https://github.com/ByteRax/zcode-token-usage-statusbar/tree/plugin-releases) 的市场清单指向当前正式 Release。新用户请在添加市场界面使用 `https://github.com/ByteRax/zcode-token-usage-statusbar#plugin-releases`，具体版本以该清单为准。
+[`plugin-releases` 分支](https://github.com/neoblackxt/zcode-token-usage-statusbar/tree/plugin-releases) 的市场清单指向当前正式 Release。新用户请在添加市场界面使用 `https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases`，具体版本以该清单为准。
 
 GitHub 访问受限时可注册 GitCode 镜像渠道 `https://gitcode.com/tanranran/zcode-token-usage-statusbar.git#plugin-releases-gitcode`：清单由同一份发布产物生成，ZIP 与 SHA256 和 GitHub Release 完全一致，版本检查、下载与安装全部在 GitCode 完成。该渠道要求本机装有 Git（宿主通过 git 拉取渠道清单）。
 
@@ -93,7 +93,7 @@ GitHub 访问受限时可注册 GitCode 镜像渠道 `https://gitcode.com/tanran
 市场名仍是 `zusage-marketplace`，但来源从默认分支/本地目录变为 `#plugin-releases`。**已安装用户不会自动切换，也不必为了添加分支卸载浮层。** 想迁移时：
 
 1. 先关闭插件自动更新，等待正在进行的更新结束，记下现有市场来源。
-2. 打开 **设置 → 插件 → 发现 → +（添加插件市场）**，填写 `https://github.com/ByteRax/zcode-token-usage-statusbar#plugin-releases`。通过市场管理确认并切换同名市场来源；不支持同名来源替换时，先移除旧市场注册再添加正式地址，**无需卸载插件或浮层**。
+2. 打开 **设置 → 插件 → 发现 → +（添加插件市场）**，填写 `https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases`。通过市场管理确认并切换同名市场来源；不支持同名来源替换时，先移除旧市场注册再添加正式地址，**无需卸载插件或浮层**。
 3. 在市场管理中确认 `zusage-marketplace` 指向新地址，来源的 `ref` 为 `plugin-releases`，再刷新市场并在插件页按需更新。不要只看到插件已安装就假定来源已切换。
 4. 确认正式包可读取后，按自己的偏好开启自动更新。更新涉及主进程文件时，完全退出并重开 ZCode。
 
@@ -108,7 +108,7 @@ GitHub 访问受限时可注册 GitCode 镜像渠道 `https://gitcode.com/tanran
 不通过插件时，先安装 Python 和 Git，在系统终端执行：
 
 ```bash
-git clone https://github.com/ByteRax/zcode-token-usage-statusbar.git
+git clone https://github.com/neoblackxt/zcode-token-usage-statusbar.git
 cd zcode-token-usage-statusbar
 python install.py
 ```
@@ -315,11 +315,11 @@ token 数量单位默认跟随 **⚙ → 通用 →「中文单位（万/亿）�
 
 ### 安装和启用
 
-1. 在打开远控页的浏览器里启用用户脚本管理器（如 Tampermonkey），并[安装正式版手机脚本](https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js)。桌面状态条 **⚙ → 维护 → 移动端远程控制** 也提供可选中复制的「正式版脚本链接」。
+1. 在打开远控页的浏览器里启用用户脚本管理器（如 Tampermonkey），并[安装正式版手机脚本](https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.user.js)。桌面状态条 **⚙ → 维护 → 移动端远程控制** 也提供可选中复制的「正式版脚本链接」。
 2. 使用支持同一中继协议的桌面插件，在该分区开启「推送状态栏数据到远控页」，并开启宿主的「Web 远程控制」。推送默认关闭，安装脚本后仍需在桌面启用。
 3. 在浏览器中打开 `https://zcode.z.ai/remote/`，按宿主授权流程连接会话。脚本匹配 `https://zcode.z.ai/remote/*`，安装后请刷新已经打开的远控页。
 
-脚本安装地址提供上游 `main` 根目录的发布快照，可能落后于桌面源码。脚本管理器按各自的 `@updateURL` 和 `@downloadURL` 检查和下载更新，检查频率和确认方式由管理器设置决定。桌面正式渠道的功能可用性以对应 Release 说明为准。
+脚本安装地址提供本分叉 `clean` 分支根目录的发布快照，不随每次桌面源码提交更新。脚本管理器按各自的 `@updateURL` 和 `@downloadURL` 检查和下载更新，检查频率和确认方式由管理器设置决定。
 
 ### 显示与数据
 
@@ -331,15 +331,15 @@ token 数量单位默认跟随 **⚙ → 通用 →「中文单位（万/亿）�
 
 ### 排查连接与补装
 
-排查时可切换到[调试版手机脚本](https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.debug.user.js)，两版只启用其中一个。调试面板没有捕获到连接时，可手动刷新远控页。
+排查时可切换到[调试版手机脚本](https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.debug.user.js)，两版只启用其中一个。调试面板没有捕获到连接时，可手动刷新远控页。
 
-持久手机钩子由插件 `/install-overlay` 和 SessionStart 安装链维护。开启推送后，SessionStart 可按归档状态提示处理方式。
+**clean 分叉**：持久手机钩子只由 `/install-overlay` 显式安装链写入（与状态条、渲染桥同一次重打包），SessionStart **不自动补装**，也不会在会话里提示补装。`/install-overlay` 的命令行输出会按结果给出指引：
 
-- **手机中继补丁已排定**。完全退出 ZCode，让监控应用已验证的待替换包，再重新打开 ZCode。Windows 上仅关闭窗口可能会让进程继续驻留托盘。
-- **手机中继补丁暂缓，已有待替换操作**。先让既有操作收尾，后续 SessionStart 会重试补装。
-- **手机远控增强尚未就绪**。在输入框运行 `/install-overlay` 重试。若提示已排定，可通过状态条 ⚙ 的「重启 ZCode」完成。所有需要手动重试的延后原因共用一条 24 小时提示记录。
+- **补丁已排定**。完全退出 ZCode，让监控应用已验证的待替换包，再重新打开 ZCode。Windows 上仅关闭窗口可能会让进程继续驻留托盘。
+- **补丁暂缓，已有待替换操作**。先让既有操作收尾（通常完全退出一次），再重跑 `/install-overlay`。
+- **重试仍失败**。从托盘完全退出 ZCode 后重跑一次；仍不行可查看客户端插件日志。
 
-状态条补丁、手机钩子与渲染桥补丁可能分轮排定：一次完全退出只收尾当轮，重启后若仍提示，再完全退出一次即可。
+状态条补丁、手机钩子与渲染桥补丁可能分轮排定：一次完全退出只收尾当轮，重启后若齿轮仍亮红点，再完全退出一次即可。
 
 若桌面开关提示旧主进程不支持，先更新实际安装副本，使实际加载目录得到匹配的 `inject-main.cjs`，再完全退出并重开 ZCode。
 

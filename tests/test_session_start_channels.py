@@ -221,7 +221,8 @@ class SessionStartChannelTests(unittest.TestCase):
 
     def test_registered_host_starts_update_without_force(self):
         # 对照：宿主版本已登记时 force=False（正常 1h 限频口径），不因预判旁路。
-        with mock.patch.object(self.installer, "_host_build", return_value="3.17.2"),                 mock.patch.object(self.installer, "_host_registered", return_value=True):
+        with mock.patch.object(self.installer, "_host_build", return_value="3.17.2"), \
+                mock.patch.object(self.installer, "_host_registered", return_value=True):
             output, _ = self.invoke()
         self.assertEqual(output, {"suppressOutput": True})
         self.updater.start_auto_update.assert_called_once_with(self.runtime, self.pi, force=False)
@@ -279,8 +280,8 @@ class SessionStartChannelTests(unittest.TestCase):
         output, _ = self.invoke()
         self.assertEqual(output, {"suppressOutput": True})
         self.assertEqual((marker.read_bytes(), marker.stat().st_mtime_ns), before)
-        self.install.assert_called_once()
-        self.assertTrue(self.install.call_args.kwargs.get("mobile_only"))
+        # clean 分叉反转：hook 不补手机钩子（原则 4——归档写入只经 /install-overlay 显式链）
+        self.install.assert_not_called()
 
     def test_successful_auto_install_stays_silent(self):
         # clean 分叉反转：不存在"自动安装成功"路径——hook 零安装，asar 保持官方字节，
@@ -311,14 +312,15 @@ class SessionStartChannelTests(unittest.TestCase):
             output, _ = self.invoke()
         self.assertEqual(output, {"suppressOutput": True})
         self.install.assert_not_called()
-        revive_pending.assert_called_once_with(self.pi)
+        # clean 分叉反转（改造表 #11）：孤儿待收尾包自愈不接线，恢复路径是重跑 /install-overlay
+        revive_pending.assert_not_called()
 
     def test_injected_client_without_restart_marker_supplements_mobile_silently(self):
         self.make_asar(injected=True)
         output, _ = self.invoke()
         self.assertEqual(output, {"suppressOutput": True})
-        self.install.assert_called_once()
-        self.assertTrue(self.install.call_args.kwargs.get("mobile_only"))
+        # clean 分叉反转：无重启标记也不补手机钩子——hook 零归档写入
+        self.install.assert_not_called()
 
     def test_unreadable_client_stays_silent_and_skips_mobile_supplement(self):
         self.asar.write_bytes(b"fixture unreadable asar")

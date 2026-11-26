@@ -30,6 +30,15 @@
 - 上游 rules 中有长期价值的沉淀（同病同修的陷阱、可复用的定责/验证方法）在跟进提交时**摘译**进本文件对应章节，不整篇搬运；
 - 本文件只写长期约束与陷阱；PR 号、提交哈希、发版状态、用例数等易变事实不写入。与源码/测试冲突时以源码与测试为准，并同步修本文件。
 
+**rebase 纪律**（历轮实测教训，违反即静默丢上游内容）：
+
+- **冲突块逐侧取舍，禁止整文件取 fork 终态**：循环里对冲突文件 `git checkout <backup> -- <file>` 会把上游对同一文件的改动整体退回（先例：06 分片丢 38 代台账、59 个文件退回旧版）。先看冲突块——块内无 fork 语义（VERSION 台账、CSS、上游新增测试行）一律取上游；fork 语义在块外会自动合并。
+- **基点用上游 tag，不用会被重打的本地同名 tag 做参照**：本仓发版会把 `vX.Y.Z` 重打到 fork 提交，之后 `git diff vX.Y.Z fork` 比的是 fork 自己。算「fork 有意差异集」要以**真上游提交**（`upstream/main` 历史里 `release: vX.Y.Z` 那个，或 `git merge-base`）为参照。
+- **rebase 前先算有意差异集与真冲突面**：`git diff --name-only <真上游基点> <fork>` 得有意差异集，与 `<上游上一版>..<新基点>` 的改动取交集即真冲突面；循环解冲突时命中真冲突面必须停下人工看块。
+- **重放后体检**：`git diff --name-status <新基点> HEAD` 的结果应恰为有意差异集（D 只有 rules 目录，A 只有 fork 独有文件）；逐项核对分叉核心符号在位（`emit("")`、`visible_context` 恒空、`run_hook` 体内零安装调用、四大缺省关守卫）。
+- **上游重构掉 fork 所守的行为面时，旧分叉用例随上游删**（先例：手机补丁并入 loader 事务后，针对旧独立补丁链的 hook 反转用例整体让位给上游新版测试），再在上游新测试上按分叉契约逐条反转（断言 `assert_not_called` / 归档字节不变），范式见 `tests/test_session_start_channels.py` 的「clean 分叉反转」用例。
+- **manifest 的 `packageLayout.files` 以新基点为准**：冲突时取 fork 侧会把上游已删文件的条目带回（幽灵条目使发布包文件集校验失败），重放后用 `sync_plugin.py --verify-manifests` 核对。
+
 ## 1. 项目定位与环境
 
 - 为 ZCode 显示模型速度、token 用量、上下文占比（承载于原生上下文按钮增强，状态条无此格）、套餐额度/账户余额 chip 与 Git 状态 chip。用量统计来自本地 SQLite；套餐额度另走解密凭据直查供应商接口（见 §5），两条链互不推导。
@@ -81,7 +90,7 @@
 - 渲染端通过宿主会话/工作区 IPC 与本项目 scope 上报维持窗口和分栏身份；查询请求为 `{sids, scopes: [{sid, workspaceIdentity}]}`，响应 `recent` 携带 `workspace_identity`。
 - 工作区/任务 IPC、活动 SID IPC 与配置/更新写操作的校验不同；不能概括全部桥接同等可信，写操作保留本地窗口验证和固定动作白名单。
 - MCP 与 CLI 使用查询库；插件 `.mcp.json` 经宿主预置 `zcode-python` 直接拉起包内 `usage_mcp.py`，不是统一 `run.py` 入口。
-- `hooks/session-start.py` 负责运行文件同步、更新/自动安装（恒开）与故障提示；正常安装/待重启不再注入会话文字，由 ⚙ 齿轮红点承载（v172）；`hooks/prompt-submit.py` 记录本会话提问时间并注入「上一条回复」背景行，**不再向模型下达统计指令**——逐问统计行由前端确定性渲染（依赖 renderer 桥），会话末尾经主桥 `turn-text` 通道调用包内 `token_rate.py --turn --current` 回推富文本；子代理窗格（`sess_subagent_*` 只读分栏，v458）由 03 分片的伪 owner 观察器认领，请求带页面轮号走 `--turn-ref`（specs/subagent-turn-stats-line.md）。
+- `hooks/session-start.py` （clean 分叉）只做运行文件同步、按配置启动后台更新检查与故障提示——**不自动安装、不补桥、不写任何客户端文件**（原则 4：这些只经 `/install-overlay` 显式链）；`hooks/prompt-submit.py` 只记录本会话提问时间，**不向模型上下文注入任何文字**（上游的「上一条回复」背景行注入与统计指令均已彻底移除，原则 1–3）——逐问统计行由前端确定性渲染（依赖 renderer 桥），会话末尾经主桥 `turn-text` 通道调用包内 `token_rate.py --turn --current` 回推富文本；子代理窗格（`sess_subagent_*` 只读分栏，v458）由 03 分片的伪 owner 观察器认领，请求带页面轮号走 `--turn-ref`（specs/subagent-turn-stats-line.md）。
 - 专有入口是 `overlay_install.py`、`plugin_auto_update.py`、`restart_notice.py` 等；改变 hook 返回值应检查宿主 CLI 契约，不以手工执行代替自然事件验收。
 
 ## 3. 源文件、副本与正在运行的文件
@@ -130,7 +139,7 @@ python3 sync_plugin.py --check
 - Windows 进程查询沿用 `subprocess` argv 与相应解码，不让 Git Bash 转换 `/FI` 等开关；asar 被占用的收尾必须由宿主以外的监控进程执行，不能依赖 ZCode 自己的定时任务。
 - 配置只合并需要的键，不整体覆盖 `config.json`；保留未知键、用户显式关闭与个人路径。插件配置事务在锁内重读、合并，再同目录原子替换；损坏或非对象配置不能被默默重建。
 - `config.example.json` 是模板，不可原样执行占位的 Python/SSH 路径。缺字段默认值、非布尔异常值与显式 `false` 不能混为一谈，各开关应读相应实现。
-- 自动安装恒开（v172 移除 `plugin_auto_install_overlay` 与 `ZUSAGE_PLUGIN_AUTO_INSTALL`，遗留值只保留不消费）：SessionStart 未注入即自动装，仅 `.plugin-overlay-optout` 能豁免；失败只给故障 `_nudge`。`plugin_auto_update` 是独立开关；损坏或非布尔更新配置不能启动自动更新。
+- **自动安装在 clean 分叉已禁用**（原则 4）：SessionStart 未注入时只打 stderr 日志，不自动装；安装只经 `/install-overlay`、`install.py` 或 ⚙ 显式动作。`.plugin-overlay-optout` 标记仍写入（卸载链保留），上游的 `plugin_auto_install_overlay`/`ZUSAGE_PLUGIN_AUTO_INSTALL` 遗留值只保留不消费。`plugin_auto_update` 是独立开关；损坏或非布尔更新配置不能启动自动更新。
 - 会话内重启/安装提醒文字已取消（v172）：待重启由 ⚙ 齿轮红点承载（`plugin-updater.cjs` 推送 `restartRequired`/`markerAt` 代际，overlay 消费；v208 起红点仅待重启驱动——发现新版未安装、更新成功且已热重载均不亮，分量级已读比较保留以兼容旧 seen 串）；带待重启红点点 ⚙ 直接落「插件更新」分区（激活即 ack），设置页该分区有待重启提示条（标记带 version 即更新安装时为「已更新成功，点击重启 ZCode 即可生效」，无 version 键的标记（v360 起桥补装 pending 也写标记）为中性「有待生效的改动，点击重启 ZCode」；旧主进程降级回文字指引）；`restart_notice` 显式 `false` 关红点；`reminder()` 只服务 `/install-overlay` 命令行反馈与故障 `_nudge`。⚙ 更新页有「重启 ZCode」按钮（主进程 `relaunch` 白名单动作，浮层二次确认）。
 - CLI 普通报表、JSON 快照、hook JSON、MCP stdio 各有输出契约：机器协议的 stdout 不夹日志、安装提示或调试文本；诊断走已有 stderr/诊断文件路径。
 - 常驻查询是一请求一行 JSON 的协议；MCP 是 JSON-RPC，不可混用两者消息形状。增字段需兼容生产者、消费者与测试夹具。三条 stdio 链的入站帧都在脚本入口按 UTF-8 解码（`usage_mcp.py`、`zusage.py serve` 出入站一并 `reconfigure(encoding="utf-8")`；`runtime_lock.py` 命令行只钉入站且用严格解码——一次性 CLI 让畸形字节直接失败，输出按构造恒 ASCII）：宿主按 UTF-8 写帧，而宿主只给工具 shell 与 hooks 的执行环境注入 `PYTHONUTF8`，MCP 子进程与主桥、更新器拉起的 Python 都拿不到这层注入，中文 Windows 的管道默认按区域代码页解码——中文 `scope` 与含非 ASCII 的远端身份曾被读成乱码（真子进程用例见 `tests/test_usage_mcp_stdio.py`、`tests/test_serve_stdio.py`、`tests/test_runtime_lock_windows.py`）。
@@ -185,7 +194,7 @@ python3 sync_plugin.py --check
 
 - 只经宿主官方 acknowledged relay 推送（`relayProtocol.protocol.send`，seq/ack 归宿主），不自建 socket、不裸写 relay；目标唯一来源是可信唯一桌面窗口的 preload `getWebRemoteControlStatus()` + 唯一 ready live 桥，禁止用 DOM chips、目录/标题或最近会话猜测。`mobile_relay.enabled` 仅对象内显式 `true` 开启；新旧 loader 混载必须同时满足 `strictOptIn:true` 与能力回调。
 - wire 下发实际目标会话 ID、统计投影、匿名 `binding` 与所属主机今日/项目聚合（可能含其他会话贡献），真实工作区身份/路径/标题/正文/凭据不得进入 wire；上行仅带显示偏好与代际。旧宿主 chips-only 帧只显示升级提示，不复活独立状态条。
-- `patch_install.py` 的 `install`、`remove`、`check` 是唯一手机归档补丁入口；独立安装、插件显式安装与 SessionStart 补装均与 loader 共用当前归档变换和既有待替换流程，不再调用独立手机脚本。已有 loader 时 SessionStart 先处理 renderer bridge，再补手机钩子；任一既有 pending/sidecar 均让位，不改写待替换文件或重定向 loader。`mobile_relay.enabled` 只门控中继功能与 SessionStart 手机提示，不门控归档写入或重启标记。持久钩子需完全重启后生效。SessionStart 补装遵循**锁窗口纪律**：读档、重打包与整包校验在共享目标锁外，目标锁只包「pending 复查 + 身份复验 + 替换」；构建锁→目标锁→marker 锁均零等待，hook 仅对锁竞争退避重试一次（首轮耗时达到 15s 不再重试，防顶破 SessionStart 60s 预算）。安装/卸载与提示边界见 [app.asar 手机补丁合并规格](specs/asar-install.md) 与[手机中继规格](specs/mobile-relay.md)。
+- `patch_install.py` 的 `install`、`remove`、`check` 是唯一手机归档补丁入口；独立安装、插件显式安装与 SessionStart 补装均与 loader 共用当前归档变换和既有待替换流程，不再调用独立手机脚本。**clean 分叉里 SessionStart 不做任何补装**（原则 4）——桥与手机钩子都只经 `/install-overlay` 显式链（`ensure_renderer_bridge` → `ensure_mobile_relay_stash`）写入；上游的 SessionStart 自动补桥/补钩子路径不接线。显式链内任一既有 pending/sidecar 均让位，不改写待替换文件或重定向 loader。`mobile_relay.enabled` 只门控中继功能与 SessionStart 手机提示，不门控归档写入或重启标记。持久钩子需完全重启后生效。显式链补装遵循**锁窗口纪律**：读档、重打包与整包校验在共享目标锁外，目标锁只包「pending 复查 + 身份复验 + 替换」；构建锁→目标锁→marker 锁均零等待，仅对锁竞争退避重试一次（首轮耗时达到 15s 不再重试）。安装/卸载与提示边界见 [app.asar 手机补丁合并规格](specs/asar-install.md) 与[手机中继规格](specs/mobile-relay.md)。
 - 完整契约见 [specs/mobile-relay.md](specs/mobile-relay.md)、[app.asar 手机补丁合并规格](specs/asar-install.md)、[mobile-unified-overlay.md](specs/mobile-unified-overlay.md)、[mobile-userscript-build.md](specs/mobile-userscript-build.md)。
 
 ### 安装、数据保护与网络
@@ -265,7 +274,7 @@ python3 sync_plugin.py --check
 先读 [开发与发布](docs/maintaining.md#发布插件)与[仓库发布技能](.zcode/skills/zcode-github-release/SKILL.md)及其引用文档，不复制旧操作而跳过校验。
 
 - 本地同步 ≠ 打包 ≠ 校验 ≠ 发布预演 ≠ 提交/tag/Release/渠道推送；源码改版、正式渠道发布、用户安装副本升级是不同步骤。
-- **`plugin-releases` 渠道分支是孤儿单文件分支**（2026-11-23 重构）：只有根 `marketplace.json` 一个文件，宿主按 ref 只读它（source 指向 Release ZIP 资产）。不要从 `clean`/源码树建渠道提交（上游同分支是全快照形态，那是沿袭不是必需）；每次发版在孤儿分支上改 `version`/`url`/`sha256` 三处即可，清单保持 i18n/icon 完整形态。本仓发版实际走 fork 的 CI 流水线（推 tag 触发 `release` workflow 确定性构建并自动创建 Release），随后手工收尾：`gh release edit` 详化正文 → 孤儿分支清单推送 → `clean` 回填 sha256。
+- **`plugin-releases` 渠道分支是孤儿单文件分支**（2026-11-23 重构）：只有根 `marketplace.json` 一个文件，宿主按 ref 只读它（source 指向 Release ZIP 资产）。不要从 `clean`/源码树建渠道提交（上游同分支是全快照形态，那是沿袭不是必需）；每次发版在孤儿分支上改 `version`/`url`/`sha256` 三处即可，清单保持 i18n/icon 完整形态。本仓发版实际走 fork 的 CI 流水线（推 tag 触发 `release` workflow 确定性构建并自动创建 Release），随后手工收尾：`gh release edit` 详化正文 → 孤儿分支清单推送 → `clean` 回填 sha256。**已知待决**：上游 main 在 v1.5.24 之后新增 `release_tool.py` 的 `channel-commit` 工具且**缺省拒绝孤儿提交**（防渠道分支断链，上游有分支保护与 GitCode 禁强推）；fork 下次跟进上游 main 时必须先决策——保持孤儿形态则不用该工具（手工三字段提交），或迁回快照形态以复用其补推/对账能力。v1.5.24 基点不含该工具，无冲突。
 - 两份 `.zcode-plugin/plugin.json`、`.claude-plugin/plugin.json` 与根 `marketplace.json` 的插件身份/版本须一致；正式渠道清单是生成的 `marketplace-release.json`，不要覆盖源码市场入口；发版前过渡态用目标版本资产 URL + 全零 sha256 占位（`catalog_source_error` 允许，发版后回填真值）。
 - `release_tool.py build` 的输出目录须尚不存在，包只含枚举分发文件；`verify` 校验身份、文件集、SHA256 与安全解包，参数示例见维护文档。
 - `publish --dry-run` 不是离线检查：仍有 GitHub 只读 preflight，要求已提交源码、本地/远端 tag 与目标提交一致、Release 不存在及非空 UTF-8 更新说明。预演不授予正式发布权限。

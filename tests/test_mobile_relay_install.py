@@ -199,11 +199,20 @@ class MobileInstallTests(unittest.TestCase):
             yield depth
 
     def test_session_start_upgrades_legacy_hooks_in_the_existing_archive(self):
+        # clean 分叉反转（原则 4）：SessionStart 不做归档升级——旧代钩子的升级只经
+        # /install-overlay 显式链（install 事务「apply 升级旧代并补齐两段」）。hook 跑过后
+        # 归档逐字节不变、无 pending/stage 残留。
         self.write_archive(self.with_loader(self.legacy_body(LEGACY)))
+        before = self.target.read_bytes()
         updates = mock.Mock()
-        with mock.patch.object(self.installer, "resolve_paths", return_value=(self.runtime, self.pi)),                 mock.patch.object(self.installer, "sync_runtime"),                 mock.patch.object(self.installer, "dedupe_legacy_mcp", return_value="absent"),                 mock.patch.object(self.installer, "ensure_renderer_bridge", return_value={"status": "present"}),                 mock.patch.dict(sys.modules, {"plugin_auto_update": updates}),                 contextlib.redirect_stderr(io.StringIO()):
+        with mock.patch.object(self.installer, "resolve_paths", return_value=(self.runtime, self.pi)), \
+                mock.patch.object(self.installer, "sync_runtime"), \
+                mock.patch.object(self.installer, "dedupe_legacy_mcp", return_value="absent"), \
+                mock.patch.object(self.installer, "ensure_renderer_bridge", return_value={"status": "present"}), \
+                mock.patch.dict(sys.modules, {"plugin_auto_update": updates}), \
+                contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self.installer.run_hook(), {"suppressOutput": True})
-        self.assert_installed(self.target)
+        self.assertEqual(self.target.read_bytes(), before)
         self.assert_no_pending_or_stage()
 
     def sharing_violation(self):

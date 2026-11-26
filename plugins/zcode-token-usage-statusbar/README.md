@@ -19,7 +19,7 @@ See model speed, token usage, context size, plan quota, and Git status while you
 
 ## Install & first run
 
-1. Install this plugin from the marketplace and keep it enabled — in ZCode → Settings → Plugins → Add marketplace, paste `https://github.com/ByteRax/zcode-token-usage-statusbar#plugin-releases` (the officially released stable channel), then install **ZCode Token Usage Statusbar**.
+1. Install this plugin from the marketplace and keep it enabled — in ZCode → Settings → Plugins → Add marketplace, paste `https://github.com/neoblackxt/zcode-token-usage-statusbar#plugin-releases` (the officially released stable channel), then install **ZCode Token Usage Statusbar**.
 2. Open (or reopen) a session. The plugin then installs / repairs the status bar automatically. **This modifies `app.asar` — only proceed if you trust this project.**
 3. **Fully quit and reopen ZCode.**
 
@@ -27,7 +27,7 @@ Auto-install is always on (the legacy `plugin_auto_install_overlay` config key a
 
 ## Mobile remote page (current source feature)
 
-[Install the regular mobile script](https://raw.githubusercontent.com/ByteRax/zcode-token-usage-statusbar/main/zusage-mobile.user.js) with a userscript manager such as Tampermonkey in the browser you use for remote control. In the desktop status bar, open **⚙ → Maintenance → Mobile remote control** and turn on **Push status bar data to the remote page**, which is off by default. Then enable the host’s **Web Remote Control** and open `https://zcode.z.ai/remote/`.
+[Install the regular mobile script](https://raw.githubusercontent.com/neoblackxt/zcode-token-usage-statusbar/clean/zusage-mobile.user.js) with a userscript manager such as Tampermonkey in the browser you use for remote control. In the desktop status bar, open **⚙ → Maintenance → Mobile remote control** and turn on **Push status bar data to the remote page**, which is off by default. Then enable the host’s **Web Remote Control** and open `https://zcode.z.ai/remote/`.
 
 The install link serves a published snapshot from the root of `main`, which can lag behind desktop source. Use a desktop plugin that supports the same relay protocol and check the desktop Release notes for stable-channel availability. See the [mobile remote guide (Chinese)](https://github.com/ByteRax/zcode-token-usage-statusbar/blob/main/docs/user-guide.md#手机远控页面) for setup, data boundaries and troubleshooting.
 
